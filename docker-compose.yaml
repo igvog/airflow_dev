@@ -47,7 +47,7 @@ services:
   # ----- ETL TARGET DATABASE -----
   # This is the separate Postgres DB for our ETL pipeline
   postgres-etl-target:
-    image: postgres:13
+    image: postgres:15
     container_name: postgres-etl-target
     ports:
       - "5433:5432" # Expose on host port 5433 to avoid conflict
