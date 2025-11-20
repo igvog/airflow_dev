@@ -120,8 +120,8 @@ docker-compose down -v
 Task:
 1. Define dataset
 2. Write dag which creates dim/facts tables.
-**3. Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-**4. Technical add.work: package manager to UV or poetry, **
+3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
+4. **Technical add.work: package manager to UV or poetry**
 
 Expected project output:
 1. Code
