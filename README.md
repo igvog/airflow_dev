@@ -122,3 +122,8 @@ Task:
 2. Write dag which creates dim/facts tables.
 **3. Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
 **4. Technical add.work: package manager to UV or poetry, **
+
+Expected project output:
+1. Code
+2. Airflow DAG UI
+3. Dataset in DB
