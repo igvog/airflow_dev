@@ -132,12 +132,12 @@ with DAG(
         task_id='fetch_api_data',
         python_callable=fetch_api_data,
     )
-    
+
     def load_posts_to_staging(**context):
         """Load posts data into staging table"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         posts_data = context['ti'].xcom_pull(key='posts_data', task_ids='fetch_api_data')
-        
+
         for post in posts_data:
             insert_query = """
             INSERT INTO staging_posts (id, user_id, title, body, raw_data)
@@ -201,19 +201,19 @@ with DAG(
                     json.dumps(user)
                 )
             )
-        
+
         logging.info(f"Loaded {len(users_data)} users into staging_users")
-    
+
     load_users = PythonOperator(
         task_id='load_users_to_staging',
         python_callable=load_users_to_staging,
     )
-    
+
     def load_comments_to_staging(**context):
         """Load comments data into staging table"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         comments_data = context['ti'].xcom_pull(key='comments_data', task_ids='fetch_api_data')
-        
+
         for comment in comments_data:
             insert_query = """
             INSERT INTO staging_comments (id, post_id, name, email, body, raw_data)
@@ -237,16 +237,16 @@ with DAG(
                     json.dumps(comment)
                 )
             )
-        
+
         logging.info(f"Loaded {len(comments_data)} comments into staging_comments")
-    
+
     load_comments = PythonOperator(
         task_id='load_comments_to_staging',
         python_callable=load_comments_to_staging,
     )
-    
+
     # ========== DATA WAREHOUSE LAYER (STAR SCHEMA) ==========
-    
+
     create_dw_schema = PostgresOperator(
         task_id='create_dw_schema',
         postgres_conn_id='postgres_etl_target_conn',
@@ -255,7 +255,7 @@ with DAG(
         DROP TABLE IF EXISTS fact_posts CASCADE;
         DROP TABLE IF EXISTS dim_users CASCADE;
         DROP TABLE IF EXISTS dim_dates CASCADE;
-        
+
         -- Dimension: Users
         CREATE TABLE dim_users (
             user_key SERIAL PRIMARY KEY,
@@ -272,7 +272,7 @@ with DAG(
             is_current BOOLEAN DEFAULT TRUE,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         -- Dimension: Dates (for time-based analysis)
         CREATE TABLE dim_dates (
             date_key INTEGER PRIMARY KEY,
@@ -286,7 +286,7 @@ with DAG(
             day_name VARCHAR(20),
             is_weekend BOOLEAN
         );
-        
+
         -- Fact: Posts (with metrics)
         CREATE TABLE fact_posts (
             post_key SERIAL PRIMARY KEY,
@@ -301,18 +301,18 @@ with DAG(
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         -- Create indexes for better query performance
         CREATE INDEX idx_fact_posts_user_key ON fact_posts(user_key);
         CREATE INDEX idx_fact_posts_date_key ON fact_posts(date_key);
         CREATE INDEX idx_fact_posts_post_id ON fact_posts(post_id);
         """,
     )
-    
+
     def populate_dim_users(**context):
         """Populate user dimension table from staging"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
+
         sql = """
         INSERT INTO dim_users (user_id, username, name, email, phone, website, city, company_name)
         SELECT DISTINCT
@@ -335,19 +335,19 @@ with DAG(
             company_name = EXCLUDED.company_name,
             updated_at = CURRENT_TIMESTAMP;
         """
-        
+
         hook.run(sql)
         logging.info("Populated dim_users dimension table")
-    
+
     populate_dim_users_task = PythonOperator(
         task_id='populate_dim_users',
         python_callable=populate_dim_users,
     )
-    
+
     def populate_dim_dates(**context):
         """Populate date dimension table"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
+
         # Generate dates for the next 5 years
         sql = """
         INSERT INTO dim_dates (date_key, full_date, year, quarter, month, month_name, day, day_of_week, day_name, is_weekend)
@@ -427,9 +427,8 @@ with DAG(
     # Staging layer
     create_staging >> fetch_data
     fetch_data >> [load_posts, load_users, load_comments]
-    
+
     # Data warehouse layer
     [load_posts, load_users, load_comments] >> create_dw_schema
     create_dw_schema >> [populate_dim_users_task, populate_dim_dates_task]
     [populate_dim_users_task, populate_dim_dates_task] >> populate_fact_posts_task
-
