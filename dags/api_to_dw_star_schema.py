@@ -19,7 +19,7 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 1,
+    'retries': 0,
     'retry_delay': timedelta(minutes=5),
 }
 
@@ -269,7 +269,8 @@ with DAG(
             company_name VARCHAR(200),
             valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             valid_to TIMESTAMP,
-            is_current BOOLEAN DEFAULT TRUE
+            is_current BOOLEAN DEFAULT TRUE,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         
         -- Dimension: Dates (for time-based analysis)
@@ -382,11 +383,7 @@ with DAG(
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         
         sql = """
-        INSERT INTO fact_posts (
-            post_id, user_key, date_key, title, body, 
-            body_length, word_count, comment_count
-        )
-        SELECT
+        MERGE INTO public.fact_posts AS e USING (SELECT
             sp.id as post_id,
             du.user_key,
             TO_CHAR(sp.loaded_at, 'YYYYMMDD')::INTEGER as date_key,
@@ -401,16 +398,20 @@ with DAG(
             SELECT post_id, COUNT(*) as comment_count
             FROM staging_comments
             GROUP BY post_id
-        ) comment_counts ON sp.id = comment_counts.post_id
-        ON CONFLICT (post_id) DO UPDATE SET
-            user_key = EXCLUDED.user_key,
-            date_key = EXCLUDED.date_key,
-            title = EXCLUDED.title,
-            body = EXCLUDED.body,
-            body_length = EXCLUDED.body_length,
-            word_count = EXCLUDED.word_count,
-            comment_count = EXCLUDED.comment_count,
-            updated_at = CURRENT_TIMESTAMP;
+        ) comment_counts ON sp.id = comment_counts.post_id) AS u
+        ON u.post_id = e.post_id
+        WHEN MATCHED THEN
+            UPDATE SET  user_key = u.user_key,
+            date_key = u.date_key,
+            title = u.title,
+            body = u.body,
+            body_length = u.body_length,
+            word_count = u.word_count,
+            comment_count = u.comment_count,
+            updated_at = CURRENT_TIMESTAMP
+    WHEN NOT MATCHED THEN
+        INSERT (post_id, user_key, date_key, title, body, body_length, word_count, comment_count)
+        VALUES (u.post_id, u.user_key, u.date_key, u.title, u.body, u.body_length, u.word_count, u.comment_count);
         """
         
         hook.run(sql)
