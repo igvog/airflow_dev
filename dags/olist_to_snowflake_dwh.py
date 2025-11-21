@@ -664,15 +664,6 @@ with DAG(
         python_callable=populate_fact_tables,
     )
 
-    def validate_dwh(**context):
-
-        logging.info("DWH validation completed")
-
-    validate_dwh_task = PythonOperator(
-        task_id='validate_dwh',
-        python_callable=validate_dwh,
-    )
-
     success_alert = EmailOperator(
         task_id='success_alert',
         to='zhaksykeldi.sr@gmail.com',
@@ -694,4 +685,4 @@ with DAG(
     # Data warehouse layer
     load_kaggle_data_task >> create_dw_tables
     create_dw_tables >> populate_dims_task >> populate_facts_task
-    populate_facts_task >> validate_dwh_task >> success_alert
+    populate_facts_task  >> success_alert
