@@ -1,107 +1,17 @@
-  version: '3.8'
+version: '3.8'
 
-  x-airflow-common: &airflow-common
-    image: apache/airflow:2.9.2-python3.12
-    env_file:
-      - .env
-    volumes:
-      - ./data:/opt/airflow/data
-      - ./dags:/opt/airflow/dags
-      - ./logs:/opt/airflow/logs
-      - ./plugins:/opt/airflow/plugins
-      - ./requirements.txt:/requirements.txt
-    networks:
-      - airflow_network
-    depends_on:
-      - postgres-airflow-db
-    entrypoint: /bin/bash
-    command:
-      - -c
-      - |
-        pip install -r /requirements.txt;
-        airflow db init;
-        airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true;
-        (airflow webserver & airflow scheduler)
-
-  services:
-    # Database for Airflow Metadata
-    postgres-airflow-db:
-      image: postgres:13
-      container_name: postgres-airflow-db
-      environment:
-        - POSTGRES_USER=airflow
-        - POSTGRES_PASSWORD=airflow
-        - POSTGRES_DB=airflow
-      volumes:
-        - airflow-db-data:/var/lib/postgresql/data
-      networks:
-        - airflow_network
-      healthcheck:
-        test: ["CMD", "pg_isready", "-U", "airflow"]
-        interval: 5s
-        timeout: 5s
-        retries: 5
-
-    # First ETL DB
-    postgres-etl-target:
-      image: postgres:15
-      container_name: postgres-etl-target
-      ports:
-        - "5433:5432"
-      environment:
-        - POSTGRES_USER=etl_user
-        - POSTGRES_PASSWORD=etl_pass
-        - POSTGRES_DB=etl_db
-      volumes:
-        - etl-db-data:/var/lib/postgresql/data
-      networks:
-        - airflow_network
-      healthcheck:
-        test: ["CMD", "pg_isready", "-U", "etl_user"]
-        interval: 5s
-        timeout: 5s
-        retries: 5
-
-    # Second ETL DB
-    postgres-etl-target-Balga:
-      image: postgres:15
-      container_name: postgres-etl-target-Balga
-      ports:
-        - "5434:5432"
-      environment:
-        - POSTGRES_USER=etl_Balga
-        - POSTGRES_PASSWORD=etl_pass
-        - POSTGRES_DB=etl_db
-      volumes:
-        - etl-db-data-Balga:/var/lib/postgresql/data
-      networks:
-        - airflow_network
-      healthcheck:
-        test: ["CMD", "pg_isready", "-U", "etl_Balga"]
-        interval: 5s
-        timeout: 5s
-        retries: 5
-
-    # Airflow Webserver + Scheduler
-    airflow-services:
-      <<: *airflow-common
-      container_name: airflow_services
-      ports:
-        - "8080:8080"
-      healthcheck:
-        test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-webserver.pid ]"]
-        interval: 10s
-        timeout: 5s
-        retries: 3
-
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.2-python3.12
+  env_file:
+    - .env
   volumes:
-<<<<<<< Updated upstream
+    - ./data:/opt/airflow/data
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/requirements.txt
   networks:
-    - airflow_network # All services on this network
+    - airflow_network
   depends_on:
     - postgres-airflow-db
   entrypoint: /bin/bash
@@ -114,14 +24,13 @@
       (airflow webserver & airflow scheduler)
 
 services:
-  # Database for Airflow Metadata
   postgres-airflow-db:
     image: postgres:13
     container_name: postgres-airflow-db
     environment:
-      - POSTGRES_USER=airflow
-      - POSTGRES_PASSWORD=airflow
-      - POSTGRES_DB=airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
     volumes:
       - airflow-db-data:/var/lib/postgresql/data
     networks:
@@ -132,17 +41,15 @@ services:
       timeout: 5s
       retries: 5
 
-  # ----- ETL TARGET DATABASE -----
-  # This is the separate Postgres DB for our ETL pipeline
   postgres-etl-target:
-    image: postgres:13
+    image: postgres:15
     container_name: postgres-etl-target
     ports:
-      - "5433:5432" # Expose on host port 5433 to avoid conflict
+      - "5433:5432"
     environment:
-      - POSTGRES_USER=etl_user
-      - POSTGRES_PASSWORD=etl_pass
-      - POSTGRES_DB=etl_db
+      POSTGRES_USER: etl_user
+      POSTGRES_PASSWORD: etl_pass
+      POSTGRES_DB: etl_db
     volumes:
       - etl-db-data:/var/lib/postgresql/data
     networks:
@@ -153,8 +60,25 @@ services:
       timeout: 5s
       retries: 5
 
-  # Airflow Webserver and Scheduler (running in one container for simplicity)
-  # For production, you'd split webserver and scheduler into separate services
+  postgres-etl-target-Balga:
+    image: postgres:15
+    container_name: postgres-etl-target-Balga
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: etl_Balga
+      POSTGRES_PASSWORD: etl_pass
+      POSTGRES_DB: etl_db
+    volumes:
+      - etl-db-data-Balga:/var/lib/postgresql/data
+    networks:
+      - airflow_network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "etl_Balga"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   airflow-services:
     <<: *airflow-common
     container_name: airflow_services
@@ -163,22 +87,14 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-webserver.pid ]"]
       interval: 10s
-      timeout: 10s
+      timeout: 5s
       retries: 3
 
 volumes:
   airflow-db-data:
   etl-db-data:
+  etl-db-data-Balga:
 
 networks:
   airflow_network:
     driver: bridge
-=======
-    airflow-db-data:
-    etl-db-data:
-    etl-db-data-Balga:
-
-  networks:
-    airflow_network:
-      driver: bridge
->>>>>>> Stashed changes
