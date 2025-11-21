@@ -2,52 +2,120 @@
 ETL DAG: API to Data Warehouse Star Schema
 This DAG extracts data from JSONPlaceholder API, loads it into Postgres,
 and transforms it into a star schema data warehouse model.
+The DAG is parameterized to enable backfills or re-runs for any date.
 """
 
-from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.providers.postgres.operators.postgres import PostgresOperator
-from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.operators.python import PythonOperator
-import requests
+from datetime import timedelta
 import json
 import logging
+import os
+from typing import List, Optional
 
-# Default arguments
+import pendulum
+import requests
+from airflow import DAG
+from airflow.models import Param
+from airflow.operators.python import PythonOperator
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.utils.email import send_email
+
+logger = logging.getLogger("api_to_dw_star_schema")
+logger.setLevel(logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    level=logging.INFO,
+)
+
+ALERT_EMAILS: List[str] = [
+    email.strip()
+    for email in os.getenv("ALERT_EMAILS", "admin@example.com").split(",")
+    if email.strip()
+]
+
+
+def _alert_on_failure(context):
+    """Send a short email notification if any task fails."""
+    dag_id = context["dag"].dag_id
+    task_id = context["task_instance"].task_id
+    run_id = context["run_id"]
+    log_url = context.get("task_instance").log_url
+
+    subject = f"[Airflow][{dag_id}] Task failed: {task_id}"
+    html_content = f"""
+    <h3>Task failure in {dag_id}</h3>
+    <ul>
+      <li><b>Task:</b> {task_id}</li>
+      <li><b>Run:</b> {run_id}</li>
+      <li><b>Log:</b> <a href="{log_url}">{log_url}</a></li>
+    </ul>
+    """
+
+    try:
+        send_email(to=ALERT_EMAILS, subject=subject, html_content=html_content)
+    except Exception as exc:  # pragma: no cover - alert must not break DAG
+        logger.error("Failed to send failure alert: %s", exc)
+
+
+def _resolve_run_date(context) -> pendulum.Date:
+    """Return the logical run date used for inserts and backfills."""
+    param_date: Optional[str] = context["params"].get("run_date")
+    if param_date:
+        parsed = pendulum.parse(param_date).date()
+        logger.info("Using parameterized run_date=%s", parsed)
+        return parsed
+    execution_date = context["data_interval_end"].date()
+    logger.info("Using data interval end as run_date=%s", execution_date)
+    return execution_date
+
+
 default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 0,
-    'retry_delay': timedelta(minutes=5),
+    "owner": "airflow",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+    "on_failure_callback": _alert_on_failure,
 }
 
 # DAG definition
 with DAG(
-    'api_to_dw_star_schema',
+    "api_to_dw_star_schema",
     default_args=default_args,
-    description='ETL pipeline: API → Postgres → Star Schema DW',
-    schedule_interval=timedelta(days=1),  # Run daily
-    start_date=datetime(2024, 1, 1),
-    catchup=False,
-    tags=['etl', 'api', 'datawarehouse', 'star-schema'],
+    description="ETL pipeline: API -> Postgres -> Star Schema DW",
+    schedule_interval="@daily",
+    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
+    catchup=True,
+    max_active_runs=1,
+    dagrun_timeout=timedelta(minutes=30),
+    tags=["etl", "api", "datawarehouse", "star-schema"],
+    params={
+        "run_date": Param(
+            default=None,
+            type=["null", "string"],
+            description="Override logical load date, e.g. 2024-01-01 (otherwise uses data interval end).",
+        ),
+        "full_refresh": Param(
+            default=True,
+            type="boolean",
+            description="Drop and recreate staging/DW tables before load.",
+        ),
+    },
 ) as dag:
 
     # ========== STAGING LAYER ==========
-    
+
     def create_staging_tables(**context):
-        """Create staging tables for raw API data"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
-        # Drop existing staging tables
+        """Create staging tables for raw API data."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+        full_refresh: bool = bool(context["params"].get("full_refresh"))
+
         drop_staging = """
         DROP TABLE IF EXISTS staging_posts CASCADE;
         DROP TABLE IF EXISTS staging_users CASCADE;
         DROP TABLE IF EXISTS staging_comments CASCADE;
         """
-        
-        # Create staging tables
+
         create_staging = """
         CREATE TABLE IF NOT EXISTS staging_posts (
             id INTEGER PRIMARY KEY,
@@ -57,7 +125,7 @@ with DAG(
             raw_data JSONB,
             loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         CREATE TABLE IF NOT EXISTS staging_users (
             id INTEGER PRIMARY KEY,
             name TEXT,
@@ -70,7 +138,7 @@ with DAG(
             raw_data JSONB,
             loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         CREATE TABLE IF NOT EXISTS staging_comments (
             id INTEGER PRIMARY KEY,
             post_id INTEGER,
@@ -81,101 +149,104 @@ with DAG(
             loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """
-        
-        hook.run(drop_staging)
+
+        if full_refresh:
+            hook.run(drop_staging)
         hook.run(create_staging)
-        logging.info("Staging tables created successfully")
-    
+        logger.info("Staging tables created successfully (full_refresh=%s)", full_refresh)
+
     create_staging = PythonOperator(
-        task_id='create_staging_tables',
+        task_id="create_staging_tables",
         python_callable=create_staging_tables,
     )
-    
+
     def fetch_api_data(**context):
-        """Fetch data from JSONPlaceholder API"""
+        """Fetch data from JSONPlaceholder API."""
         base_url = "https://jsonplaceholder.typicode.com"
-        
+        run_date = _resolve_run_date(context)
+
         try:
-            # Fetch posts
-            posts_response = requests.get(f"{base_url}/posts")
+            posts_response = requests.get(f"{base_url}/posts", timeout=30)
             posts_response.raise_for_status()
             posts_data = posts_response.json()
-            logging.info(f"Fetched {len(posts_data)} posts from API")
-            
-            # Fetch users
-            users_response = requests.get(f"{base_url}/users")
+            logger.info("Fetched %s posts from API", len(posts_data))
+
+            users_response = requests.get(f"{base_url}/users", timeout=30)
             users_response.raise_for_status()
             users_data = users_response.json()
-            logging.info(f"Fetched {len(users_data)} users from API")
-            
-            # Fetch comments
-            comments_response = requests.get(f"{base_url}/comments")
+            logger.info("Fetched %s users from API", len(users_data))
+
+            comments_response = requests.get(f"{base_url}/comments", timeout=30)
             comments_response.raise_for_status()
             comments_data = comments_response.json()
-            logging.info(f"Fetched {len(comments_data)} comments from API")
-            
-            # Store in XCom for next tasks
-            context['ti'].xcom_push(key='posts_data', value=posts_data)
-            context['ti'].xcom_push(key='users_data', value=users_data)
-            context['ti'].xcom_push(key='comments_data', value=comments_data)
-            
+            logger.info("Fetched %s comments from API", len(comments_data))
+
+            context["ti"].xcom_push(key="posts_data", value=posts_data)
+            context["ti"].xcom_push(key="users_data", value=users_data)
+            context["ti"].xcom_push(key="comments_data", value=comments_data)
+            context["ti"].xcom_push(key="run_date", value=run_date.isoformat())
+
             return {
-                'posts_count': len(posts_data),
-                'users_count': len(users_data),
-                'comments_count': len(comments_data)
+                "posts_count": len(posts_data),
+                "users_count": len(users_data),
+                "comments_count": len(comments_data),
+                "run_date": run_date.isoformat(),
             }
-        except Exception as e:
-            logging.error(f"Error fetching API data: {str(e)}")
-            raise
-    
+        except Exception as exc:
+            logger.exception("Error fetching API data")
+            raise exc
+
     fetch_data = PythonOperator(
-        task_id='fetch_api_data',
+        task_id="fetch_api_data",
         python_callable=fetch_api_data,
     )
-    
+
     def load_posts_to_staging(**context):
-        """Load posts data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        posts_data = context['ti'].xcom_pull(key='posts_data', task_ids='fetch_api_data')
-        
+        """Load posts data into staging table."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+        posts_data = context["ti"].xcom_pull(key="posts_data", task_ids="fetch_api_data")
+        run_date = pendulum.parse(context["ti"].xcom_pull(key="run_date")).date()
+
         for post in posts_data:
             insert_query = """
-            INSERT INTO staging_posts (id, user_id, title, body, raw_data)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO staging_posts (id, user_id, title, body, raw_data, loaded_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 user_id = EXCLUDED.user_id,
                 title = EXCLUDED.title,
                 body = EXCLUDED.body,
                 raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
+                loaded_at = EXCLUDED.loaded_at;
             """
             hook.run(
                 insert_query,
                 parameters=(
-                    post['id'],
-                    post['userId'],
-                    post['title'],
-                    post['body'],
-                    json.dumps(post)
-                )
+                    post["id"],
+                    post["userId"],
+                    post["title"],
+                    post["body"],
+                    json.dumps(post),
+                    run_date,
+                ),
             )
-        
-        logging.info(f"Loaded {len(posts_data)} posts into staging_posts")
-    
+
+        logger.info("Loaded %s posts into staging_posts", len(posts_data))
+
     load_posts = PythonOperator(
-        task_id='load_posts_to_staging',
+        task_id="load_posts_to_staging",
         python_callable=load_posts_to_staging,
     )
-    
+
     def load_users_to_staging(**context):
-        """Load users data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        users_data = context['ti'].xcom_pull(key='users_data', task_ids='fetch_api_data')
-        
+        """Load users data into staging table."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+        users_data = context["ti"].xcom_pull(key="users_data", task_ids="fetch_api_data")
+        run_date = pendulum.parse(context["ti"].xcom_pull(key="run_date")).date()
+
         for user in users_data:
             insert_query = """
-            INSERT INTO staging_users (id, name, username, email, phone, website, address, company, raw_data)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
+            INSERT INTO staging_users (id, name, username, email, phone, website, address, company, raw_data, loaded_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 username = EXCLUDED.username,
@@ -185,79 +256,84 @@ with DAG(
                 address = EXCLUDED.address,
                 company = EXCLUDED.company,
                 raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
+                loaded_at = EXCLUDED.loaded_at;
             """
             hook.run(
                 insert_query,
                 parameters=(
-                    user['id'],
-                    user['name'],
-                    user['username'],
-                    user['email'],
-                    user.get('phone', ''),
-                    user.get('website', ''),
-                    json.dumps(user.get('address', {})),
-                    json.dumps(user.get('company', {})),
-                    json.dumps(user)
-                )
+                    user["id"],
+                    user["name"],
+                    user["username"],
+                    user["email"],
+                    user.get("phone", ""),
+                    user.get("website", ""),
+                    json.dumps(user.get("address", {})),
+                    json.dumps(user.get("company", {})),
+                    json.dumps(user),
+                    run_date,
+                ),
             )
-        
-        logging.info(f"Loaded {len(users_data)} users into staging_users")
-    
+
+        logger.info("Loaded %s users into staging_users", len(users_data))
+
     load_users = PythonOperator(
-        task_id='load_users_to_staging',
+        task_id="load_users_to_staging",
         python_callable=load_users_to_staging,
     )
-    
+
     def load_comments_to_staging(**context):
-        """Load comments data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        comments_data = context['ti'].xcom_pull(key='comments_data', task_ids='fetch_api_data')
-        
+        """Load comments data into staging table."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+        comments_data = context["ti"].xcom_pull(key="comments_data", task_ids="fetch_api_data")
+        run_date = pendulum.parse(context["ti"].xcom_pull(key="run_date")).date()
+
         for comment in comments_data:
             insert_query = """
-            INSERT INTO staging_comments (id, post_id, name, email, body, raw_data)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO staging_comments (id, post_id, name, email, body, raw_data, loaded_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 post_id = EXCLUDED.post_id,
                 name = EXCLUDED.name,
                 email = EXCLUDED.email,
                 body = EXCLUDED.body,
                 raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
+                loaded_at = EXCLUDED.loaded_at;
             """
             hook.run(
                 insert_query,
                 parameters=(
-                    comment['id'],
-                    comment['postId'],
-                    comment['name'],
-                    comment['email'],
-                    comment['body'],
-                    json.dumps(comment)
-                )
+                    comment["id"],
+                    comment["postId"],
+                    comment["name"],
+                    comment["email"],
+                    comment["body"],
+                    json.dumps(comment),
+                    run_date,
+                ),
             )
-        
-        logging.info(f"Loaded {len(comments_data)} comments into staging_comments")
-    
+
+        logger.info("Loaded %s comments into staging_comments", len(comments_data))
+
     load_comments = PythonOperator(
-        task_id='load_comments_to_staging',
+        task_id="load_comments_to_staging",
         python_callable=load_comments_to_staging,
     )
-    
+
     # ========== DATA WAREHOUSE LAYER (STAR SCHEMA) ==========
-    
-    create_dw_schema = PostgresOperator(
-        task_id='create_dw_schema',
-        postgres_conn_id='postgres_etl_target_conn',
-        sql="""
-        -- Drop existing DW tables
+
+    def create_dw_schema(**context):
+        """Create DW tables (conditionally dropping existing ones for full refresh)."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+        full_refresh: bool = bool(context["params"].get("full_refresh"))
+
+        drop_dw = """
         DROP TABLE IF EXISTS fact_posts CASCADE;
         DROP TABLE IF EXISTS dim_users CASCADE;
         DROP TABLE IF EXISTS dim_dates CASCADE;
-        
-        -- Dimension: Users
-        CREATE TABLE dim_users (
+        """
+
+        create_dw = """
+        CREATE TABLE IF NOT EXISTS dim_users (
             user_key SERIAL PRIMARY KEY,
             user_id INTEGER UNIQUE NOT NULL,
             username VARCHAR(100),
@@ -272,9 +348,8 @@ with DAG(
             is_current BOOLEAN DEFAULT TRUE,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
-        -- Dimension: Dates (for time-based analysis)
-        CREATE TABLE dim_dates (
+
+        CREATE TABLE IF NOT EXISTS dim_dates (
             date_key INTEGER PRIMARY KEY,
             full_date DATE NOT NULL,
             year INTEGER,
@@ -286,9 +361,8 @@ with DAG(
             day_name VARCHAR(20),
             is_weekend BOOLEAN
         );
-        
-        -- Fact: Posts (with metrics)
-        CREATE TABLE fact_posts (
+
+        CREATE TABLE IF NOT EXISTS fact_posts (
             post_key SERIAL PRIMARY KEY,
             post_id INTEGER NOT NULL,
             user_key INTEGER REFERENCES dim_users(user_key),
@@ -301,18 +375,26 @@ with DAG(
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
-        -- Create indexes for better query performance
-        CREATE INDEX idx_fact_posts_user_key ON fact_posts(user_key);
-        CREATE INDEX idx_fact_posts_date_key ON fact_posts(date_key);
-        CREATE INDEX idx_fact_posts_post_id ON fact_posts(post_id);
-        """,
+
+        CREATE INDEX IF NOT EXISTS idx_fact_posts_user_key ON fact_posts(user_key);
+        CREATE INDEX IF NOT EXISTS idx_fact_posts_date_key ON fact_posts(date_key);
+        CREATE INDEX IF NOT EXISTS idx_fact_posts_post_id ON fact_posts(post_id);
+        """
+
+        if full_refresh:
+            hook.run(drop_dw)
+        hook.run(create_dw)
+        logger.info("DW schema ready (full_refresh=%s)", full_refresh)
+
+    create_dw_schema_task = PythonOperator(
+        task_id="create_dw_schema",
+        python_callable=create_dw_schema,
     )
-    
+
     def populate_dim_users(**context):
-        """Populate user dimension table from staging"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
+        """Populate user dimension table from staging."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+
         sql = """
         INSERT INTO dim_users (user_id, username, name, email, phone, website, city, company_name)
         SELECT DISTINCT
@@ -335,20 +417,19 @@ with DAG(
             company_name = EXCLUDED.company_name,
             updated_at = CURRENT_TIMESTAMP;
         """
-        
+
         hook.run(sql)
-        logging.info("Populated dim_users dimension table")
-    
+        logger.info("Populated dim_users dimension table")
+
     populate_dim_users_task = PythonOperator(
-        task_id='populate_dim_users',
+        task_id="populate_dim_users",
         python_callable=populate_dim_users,
     )
-    
+
     def populate_dim_dates(**context):
-        """Populate date dimension table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
-        # Generate dates for the next 5 years
+        """Populate date dimension table."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+
         sql = """
         INSERT INTO dim_dates (date_key, full_date, year, quarter, month, month_name, day, day_of_week, day_name, is_weekend)
         SELECT
@@ -364,29 +445,30 @@ with DAG(
             CASE WHEN EXTRACT(DOW FROM d) IN (0, 6) THEN TRUE ELSE FALSE END as is_weekend
         FROM generate_series(
             '2020-01-01'::DATE,
-            '2025-12-31'::DATE,
+            '2027-12-31'::DATE,
             '1 day'::INTERVAL
         ) d
         ON CONFLICT (date_key) DO NOTHING;
         """
-        
+
         hook.run(sql)
-        logging.info("Populated dim_dates dimension table")
-    
+        logger.info("Populated dim_dates dimension table")
+
     populate_dim_dates_task = PythonOperator(
-        task_id='populate_dim_dates',
+        task_id="populate_dim_dates",
         python_callable=populate_dim_dates,
     )
-    
+
     def populate_fact_posts(**context):
-        """Populate fact table with posts data"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
+        """Populate fact table with posts data."""
+        hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
+        run_date = pendulum.parse(context["ti"].xcom_pull(key="run_date")).date()
+
         sql = """
         MERGE INTO public.fact_posts AS e USING (SELECT
             sp.id as post_id,
             du.user_key,
-            TO_CHAR(sp.loaded_at, 'YYYYMMDD')::INTEGER as date_key,
+            TO_CHAR(%(run_date)s::DATE, 'YYYYMMDD')::INTEGER as date_key,
             sp.title,
             sp.body,
             LENGTH(sp.body) as body_length,
@@ -413,23 +495,19 @@ with DAG(
         INSERT (post_id, user_key, date_key, title, body, body_length, word_count, comment_count)
         VALUES (u.post_id, u.user_key, u.date_key, u.title, u.body, u.body_length, u.word_count, u.comment_count);
         """
-        
-        hook.run(sql)
-        logging.info("Populated fact_posts fact table")
-    
+
+        hook.run(sql, parameters={"run_date": run_date})
+        logger.info("Populated fact_posts fact table for run_date=%s", run_date)
+
     populate_fact_posts_task = PythonOperator(
-        task_id='populate_fact_posts',
+        task_id="populate_fact_posts",
         python_callable=populate_fact_posts,
     )
-    
+
     # ========== TASK DEPENDENCIES ==========
-    
-    # Staging layer
+
     create_staging >> fetch_data
     fetch_data >> [load_posts, load_users, load_comments]
-    
-    # Data warehouse layer
-    [load_posts, load_users, load_comments] >> create_dw_schema
-    create_dw_schema >> [populate_dim_users_task, populate_dim_dates_task]
+    [load_posts, load_users, load_comments] >> create_dw_schema_task
+    create_dw_schema_task >> [populate_dim_users_task, populate_dim_dates_task]
     [populate_dim_users_task, populate_dim_dates_task] >> populate_fact_posts_task
-
