@@ -1,34 +1,66 @@
-# Airflow ETL Demo Setup
+# Airflow ETL Data Warehouse Project
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+This project contains Apache Airflow DAG for building data warehouses from various data sources. It includes ETL pipeline that transforms data into snowflake schema data warehouse model.
 
-## Project Structure
+## 📋 Project Overview
 
-Ensure your files are arranged as follows:
+This project demonstrates end-to-end ETL processes using Apache Airflow, including:
+
+* **CSV Data Processing**: Processes CSV datasets and transforms into dimensional models
+* **Snowflake Schema DWH**: Implements snowflake schema for e-commerce data (Olist dataset)
+
+## 🏗️ Project Structure
 
 ```
 .
 ├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
+│   ├── olist_to_snowflake_dwh.py     # Olist CSV → Snowflake Schema DWH pipeline
+│   └── data/                          # CSV data files for Olist dataset
+│       ├── olist_customers_dataset.csv
+│       ├── olist_geolocation_dataset.csv
+│       ├── olist_order_items_dataset.csv
+│       ├── olist_order_payments_dataset.csv
+│       ├── olist_order_reviews_dataset.csv
+│       ├── olist_orders_dataset.csv
+│       ├── olist_products_dataset.csv
+│       └── olist_sellers_dataset.csv
+├── logs/                              # Airflow logs (auto-generated)
+├── plugins/                           # Airflow plugins (for future use)
+├── docker-compose.yaml               # Docker Compose configuration
+├── requirements.txt                  # Python dependencies
+├── .env                              # Environment variables (create this)
+└── README.md                         # This file
 ```
 
-## Step 1: Update .env File
+## 🚀 Getting Started
 
-Before you start, find your local user ID by running this in your terminal:
+### Prerequisites
+
+* Docker Desktop installed and running
+* Git (optional, for cloning the repository)
+
+### Step 1: Set Up Environment Variables
+
+Create a `.env` file in the project root with the following content:
+
+```env
+AIRFLOW_UID=1000
+AIRFLOW__SMTP__SMTP_PASSWORD=your_email_password
+```
+
+**Important**: Replace `1000` with your local user ID. On Linux/Mac, find it with:
 
 ```bash
 id -u
 ```
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+On Windows, you can use PowerShell:
 
-## Step 2: Start the Environment
+```powershell
+[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+```
+
+### Step 2: Start the Environment
 
 With Docker Desktop running, open a terminal in the project directory and run:
 
@@ -37,93 +69,179 @@ docker-compose up -d
 ```
 
 This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+* Pull PostgreSQL and Airflow Docker images
+* Start two PostgreSQL databases:
 
-## Step 3: Access Airflow
+  * `postgres-airflow-db`: Airflow metadata database
+  * `postgres-etl-target`: Target database for ETL pipelines
+* Build the Airflow image with required Python packages
+* Start the Airflow webserver and scheduler
 
-Open your web browser and go to:
+> **Note**: The first launch can take a few minutes as it downloads images and builds containers.
 
-**http://localhost:8080**
+### Step 3: Access Airflow UI
 
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
+Open your web browser and navigate to:
 
-## Step 4: Create the Postgres Connection
+**[http://localhost:8080](http://localhost:8080)**
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
+Default credentials:
+
+* **Username**: `admin`
+* **Password**: `admin`
+
+### Step 4: Configure Database Connection
+
+Before running the DAGs, you need to configure the PostgreSQL connection in Airflow:
 
 1. In the Airflow UI, go to **Admin → Connections**
+
 2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
 
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
+3. Fill in the connection details:
 
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
+   | Field               | Value                      |
+   | ------------------- | -------------------------- |
+   | **Connection Id**   | `postgres_etl_target_conn` |
+   | **Connection Type** | `Postgres`                 |
+   | **Host**            | `postgres-etl-target`      |
+   | **Schema**          | `etl_db`                   |
+   | **Login**           | `etl_user`                 |
+   | **Password**        | `etl_pass`                 |
+   | **Port**            | `5432`                     |
 
-## Step 5: Run Your ETL DAG
+4. Click **Test** to verify the connection
 
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
+5. Click **Save**
 
-## Step 6: Verify the Data
+## 📊 DAGs Overview
 
-How do you know it worked? Let's connect to the target database and check.
+### `olist_to_snowflake_dwh`
 
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
+**Description**: Processes Brazilian E-Commerce (Olist) dataset from CSV files and transforms it into a snowflake schema data warehouse.
 
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
+**Data Source**: Olist E-Commerce Dataset (CSV files in `dags/data/`)
 
-Once connected, run this SQL query:
+**Schema**: Snowflake Schema
+
+* **Fact Tables**:
+
+  * `fact_order_items` (order items with pricing)
+  * `fact_payments` (payment transactions)
+  * `fact_order_reviews` (customer reviews)
+  * `fact_order_delivery` (delivery tracking)
+* **Dimension Tables**:
+
+  * `dim_geolocation` (geographic data)
+  * `dim_customers` (customer information)
+  * `dim_sellers` (seller information)
+  * `dim_products` (product details)
+  * `dim_product_categories` (product categories)
+  * `dim_date` (time dimension)
+  * `dim_payment_types` (payment method types)
+
+**Tasks**:
+
+1. Create staging tables
+2. Load CSV data to staging
+3. Create data warehouse tables
+4. Populate dimension tables
+5. Populate fact tables
+6. Validate data warehouse
+7. Send success notification email
+
+**Schedule**: Daily
+
+## 🗄️ Database Access
+
+### Connect to Target Database
+
+You can connect to the ETL target database using any SQL client:
+
+* **Host**: `localhost`
+* **Port**: `5433`
+* **Database**: `etl_db`
+* **User**: `etl_user`
+* **Password**: `etl_pass`
+
+### Example Queries
+
+**Snowflake Schema DWH**:
 
 ```sql
-SELECT * FROM users;
+-- Get order statistics by category
+SELECT 
+    dpc.category_name_english,
+    COUNT(DISTINCT foi.order_id) as order_count,
+    SUM(foi.total_amount) as total_revenue
+FROM fact_order_items foi
+JOIN dim_products dp ON foi.product_id = dp.product_id
+JOIN dim_product_categories dpc ON dp.product_category_name = dpc.product_category_name
+GROUP BY dpc.category_name_english
+ORDER BY total_revenue DESC;
 ```
 
-You should see the 10 user records from the API! 🎉
+## 🔧 Configuration
 
-## Stopping the Environment
+### Email Notifications
 
-To stop all the containers, run:
+The project is configured to send email notifications on DAG completion. Configure SMTP settings in `docker-compose.yaml`:
+
+```yaml
+AIRFLOW__SMTP__SMTP_HOST=smtp.gmail.com
+AIRFLOW__SMTP__SMTP_STARTTLS=True
+AIRFLOW__SMTP__SMTP_PORT=587
+AIRFLOW__SMTP__SMTP_USER=your_email@gmail.com
+AIRFLOW__SMTP__SMTP_PASSWORD=${AIRFLOW__SMTP__SMTP_PASSWORD}
+```
+
+Set `AIRFLOW__SMTP__SMTP_PASSWORD` in your `.env` file.
+
+### Dependencies
+
+Python packages are defined in `requirements.txt`:
+
+* `apache-airflow-providers-postgres`
+* `requests`
+
+## 🛠️ Running DAGs
+
+### Manual Trigger
+
+1. Go to the Airflow DAGs dashboard
+2. Find your DAG (`olist_to_snowflake_dwh`)
+3. Toggle the DAG ON (if it's paused)
+4. Click the **Play** button (▶) to trigger a manual run
+5. Click on the DAG name to view task execution in Graph or Grid view
+
+### Scheduled Runs
+
+DAGs are configured to run on a schedule:
+
+* `olist_to_snowflake_dwh`: Daily
+
+## 📝 Features
+
+* ✅ **Staging Layer**: Raw data is first loaded into staging tables
+* ✅ **Data Warehouse Models**: Snowflake schema implementation
+* ✅ **Error Handling**: Try-catch blocks and proper error logging
+* ✅ **Logging**: Comprehensive logging throughout the pipeline
+* ✅ **Email Alerts**: Success notifications via email
+* ✅ **Data Validation**: Validation tasks to ensure data quality
+* ✅ **Idempotency**: DAGs can be run multiple times safely
+
+## 🛑 Stopping the Environment
+
+To stop all containers:
 
 ```bash
 docker-compose down
 ```
 
-To stop and remove the database volumes (deleting all your data), run:
+To stop and remove volumes (deletes all data):
 
 ```bash
 docker-compose down -v
 ```
 
-
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
-
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
