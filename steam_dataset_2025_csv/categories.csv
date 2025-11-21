@@ -1,0 +1,463 @@
+id,name
+1,Remote Play en móvil
+2,Flera spelare
+3,Tablette Remote Play
+4,Multiplayer
+5,Таблицы лидеров Steam
+6,在线合作
+7,Кооператив (локальная сеть)
+8,Achievement di Steam
+9,Compat. total c/ comando
+10,Subtitle Options
+11,Captions available
+12,Remote Play sur tablette
+13,Contenu téléchargeable
+14,Cartas Colecionáveis Steam
+15,Tela dividida/compartilhada
+16,Multigiocatore multipiattaforma
+17,VR Support
+18,HDR beschikbaar
+19,Steam Sıralama Listeleri
+20,Multipemain
+21,Steam 创意工坊
+22,Sauvegarde à tout moment
+23,Remote Play på TV
+24,Steam 云
+25,统计数据
+26,Remote Play na tablecie
+27,Steam Turn Notifications
+28,Remote Play sur téléphone
+29,Steam-topplistor
+30,Classements Steam
+31,Delvist stöd för kontroll
+32,Online-Koop
+33,Son stéréo
+34,Remote Play na TV
+35,Inclui editor de níveis
+36,Remote Play no celular
+37,Achievementy
+38,Досягнення Steam
+39,Tablas de clasificación de Steam
+40,Includes Source SDK
+41,Bölüm düzenleyicisi içerir
+42,Wieloplatformowa wieloosobowa
+43,Opção apenas com teclado
+44,Um jogador
+45,Mouse Only Option
+46,Çevrimiçi PvP
+47,Steam Başarımları
+48,Steam 集换式卡牌
+49,Multijogador multiplataforma
+50,Estadísticas
+51,Täysi tuki ohjaimille
+52,Kooperace
+53,Adjustable Difficulty
+54,Полная поддержка контроллеров
+55,Tam kontrolcü desteği
+56,Сваляемо съдържание
+57,Chat Text-to-speech
+58,シングルプレイヤー
+59,Préstamo familiar
+60,Повна підтримка контролерів
+61,Ortak/Bölünmüş Ekran Eşli
+62,解说可用
+63,Zawartość do pobrania
+64,LAN Eşli
+65,LAN PvP
+66,Layar Co-op bersama/terpisah
+67,VR Only
+68,Steam Achievements
+69,HDR desteği
+70,Include editor dei livelli
+71,Berbagi dengan Keluarga
+72,Color Alternatives
+73,Giocatore singolo
+74,Steam Műhely
+75,Full controller support
+76,Spielbar ohne zeitgesteuerte Eingabe
+77,Touch Only Option
+78,Steam 成就
+79,Гравець проти гравця в мережі
+80,Coopération
+81,Familjedelning
+82,親友同享
+83,Option clavier uniquement
+84,Steam-Sammelkarten
+85,Steam Trading Cards
+86,Logros de Steam
+87,Remote Play en TV
+88,Ortak/Bölünmüş Ekran
+89,Remote Play pe tabletă
+90,PvP
+91,Valve Anti Hile etkin
+92,跨平台多人
+93,Локальна кооперативна гра
+94,Zusätzliche Audio-Datei(en) in hoher Qualität
+95,Remote Play sur télévision
+96,Coopération en ligne
+97,Comentario disponible
+98,Wieloosobowa
+99,İndirilebilir İçerik
+100,Proezas Steam
+101,Carte collezionabili di Steam
+102,Steam-samlarkort
+103,Inkluderer nivåredigering
+104,Nuvem Steam
+105,Сімейна бібліотека
+106,Koop
+107,部分支持控制器
+108,In-App Purchases
+109,Coop. tela dividida/compart.
+110,Steam-prestasjoner
+111,Enkeltspiller
+112,PvP-Spiele mit geteiltem Bildschirm
+113,Online co-op
+114,Stáhnutelný obsah
+115,Steam-Spielzugbenachrichtigungen
+116,Частичная поддержка контроллеров
+117,Plattformsoberoende för flera spelare
+118,Classifiche di Steam
+119,Steam Workshop
+120,Містить редактор рівнів
+121,MMO
+122,Compat. parcial con mando
+123,Çevrimiçi Eşli
+124,Singleplayer
+125,Cross-Platform Multiplayer
+126,Karty kolekcjonerskie Steam
+127,DLC
+128,VR Supported
+129,Steam Timeline
+130,Family Sharing
+131,Option tactile uniquement
+132,Obsługa VR
+133,Multi-player
+134,線上玩家對戰
+135,Classificações Steam
+136,Geteilter Bildschirm
+137,Nedladdingsbart innehåll
+138,LAN-PvP
+139,应用内购买
+140,Кооператив (общий/разделённый экран)
+141,Cooperativ online
+142,Single-player
+143,Кооперативна гра
+144,Сповіщення Steam про ходи
+145,Detección de mov. en mando
+146,Семейно споделяне
+147,Включва редактор за нива
+148,Коллекционные карточки Steam
+149,Családi Megosztás
+150,定位控制器支持
+151,Coop en LAN
+152,Layar bersama/terpisah
+153,İşitme engelliler için altyazı desteği
+154,Save Anytime
+155,單人
+156,Compat. contrôleurs partielle
+157,Достижения Steam
+158,Gedeeltelijke controllerondersteuning
+159,Downloadable Content
+160,Co-op
+161,玩家对战
+162,多人
+163,Compat. parcial com controle
+164,Flerspiller
+165,Sběratelské karty
+166,Cooperativ
+167,Багатокористувацька гра
+168,Online-PvP
+169,Commentary available
+170,Кооператив
+171,Remote Play op tablets
+172,Remote Play на телевізорі
+173,Nivåredigerare ingår
+174,Prise en charge des contrôleurs suivis
+175,SteamVR Collectibles
+176,Fullt stöd för kontroll
+177,Колекційні картки Steam
+178,Мережева кооперативна гра
+179,Co-op LAN
+180,Cartonașe de schimb Steam
+181,Внутриигровые покупки
+182,Conquistas Steam
+183,Для нескольких игроков
+184,Enthält Level-Editor
+185,Compat. total com controle
+186,En spelare
+187,Dukungan kontroler penuh
+188,Steam実績
+189,Частична поддръжка на контролер
+190,Steam постижения
+191,Steam Játékkártyák
+192,Remote Play on TV
+193,Keyboard Only Option
+194,Cromos de Steam
+195,Native Steam Controller Support
+196,Multigiocatore
+197,Partita cooperativa online
+198,Multijugador
+199,Familienbibliothek
+200,Jouable sans saisie en temps imparti
+201,Steam Cloud
+202,Завантажуваний вміст
+203,Jednoosobowa
+204,JcJ en écran partagé
+205,Supporto completo per i controller
+206,JcJ
+207,Layar PvP bersama/terpisah
+208,Sieciowa kooperacja
+209,Partage familial
+210,Спільний/розділений екран
+211,Co-op Online
+212,LAN Co-op
+213,Conteúdo transferível
+214,Downloadbare inhoud
+215,Conforto de câmera
+216,Remote Play на планшете
+217,Multijugador masivo
+218,Includes level editor
+219,Игрок против игрока (общий/разделённый экран)
+220,Remote Play auf Smartphones
+221,Co-op online
+222,JcJ en LAN
+223,Remote Play на телевизоре
+224,Stereo Sound
+225,Partajare cu familia
+226,Succès Steam
+227,LAN-Koop
+228,Aile Paylaşımı
+229,Shared/Split Screen Co-op
+230,Alternativas de cores
+231,Uygulama İçi Satın Alımlar
+232,Condivisione familiare
+233,Майстерня Steam
+234,Steam Felhő
+235,Гравець проти гравця
+236,JxJ
+237,Mai mulți jucători
+238,Écran partagé
+239,Delad skärm
+240,Kooperacyjny LAN
+241,PvP online
+242,Benutzerdefinierte Lautstärkeregelung
+243,PvP Online
+244,JxJ on-line
+245,Osiągnięcia Steam
+246,Estatísticas
+247,Gezinsbibliotheek
+248,HDR disponível
+249,Fuld controllerunderstøttelse
+250,单人
+251,Einzelspieler
+252,Pełna obsługa kontrolerów
+253,Incluye editor de niveles
+254,Sous-titres disponibles
+255,Stereo-Sound
+256,Compatibilitate deplină pentru controlere
+257,Camera Comfort
+258,Общий/разделённый экран
+259,Mehrspieler
+260,Solo
+261,Contenido descargable
+262,Steam-prestationer
+263,JxJ em rede local (LAN)
+264,Perhejako
+265,Warsztat Steam
+266,Игрок против игрока (локальная сеть)
+267,Steam Teljesítmények
+268,Pantalla partida/compartida
+269,Režim pro více hráčů
+270,Additional High-Quality Audio
+271,Compatibilidad con RV
+272,Teilweise Controllerunterstützung
+273,Multijogador
+274,Áudio adic. de alta qualidade
+275,Игрок против игрока
+276,Remote Play pe telefon
+277,Samarbeid på nett
+278,Remote Play auf TV-Geräten
+279,JcJ en línea
+280,Con sist. antitrampas de Valve
+281,可下載的內容
+282,Coop. a pantalla (com)partida
+283,Steam Leaderboards
+284,Tek Oyunculu
+285,Supporto parziale per i controller
+286,Playable without Timed Input
+287,合作
+288,Cooperativo on-line
+289,Гравець проти гравця на спільному або розділеному екрані
+290,JxJ tela dividida/compart.
+291,Dukungan Kontroler Sebagian
+292,Mods
+293,Steam-Errungenschaften
+294,Steam Atölyesi
+295,Koop-Spiele mit geteiltem Bildschirm
+296,Trading Card Steam
+297,Som estéreo
+298,Таблиці лідерів Steam
+299,Remote Play на телефоне
+300,JcJ a pantalla (com)partida
+301,Tracked Controller Support
+302,Plná podpora ovladačů
+303,Televizyonda Remote Play
+304,Partilha de Biblioteca
+305,Cartes à échanger Steam
+306,Cooperativo en LAN
+307,Partial Controller Support
+308,Conținut descărcabil
+309,Sieciowe PvP
+310,Contrôle du volume différencié
+311,Prise en charge VR
+312,Steam-keräilykortit
+313,Compras em aplicativo
+314,Rankingi Steam
+315,Einstellbarer Schwierigkeitsgrad
+316,Remote Play en tableta
+317,Full støtte for kontroller
+318,Contenuti scaricabili
+319,ファミリーシェアリング
+320,С редактором уровней
+321,Remote Play на планшеті
+322,Compras dentro de la aplicación
+323,Для одного игрока
+324,Remote Play Together
+325,Adjustable Text Size
+326,HDR available
+327,Steam-ruilkaarten
+328,Un jugador
+329,家庭共享
+330,VR-Unterstützung
+331,Придбання в застосунку
+332,Steam 排行榜
+333,Zawiera edytor poziomów
+334,JcJ en ligne
+335,Steam облак
+336,HDR verfügbar
+337,Stats
+338,Oficina Steam
+339,Custom Volume Controls
+340,Online PvP
+341,Cooperativo
+342,PvP in LAN
+343,Surround Sound
+344,Éditeur de niveau inclus
+345,Steam 雲端
+346,在平板上远程畅玩
+347,Shared/Split Screen
+348,Multijugador multiplataforma
+349,Игрок против игрока (по сети)
+350,Chat Speech-to-text
+351,Coop. em rede local (LAN)
+352,Volle Controllerunterstützung
+353,Delvis støtte for kontroller
+354,Міжплатформна багатокористувацька гра
+355,Pemain Tunggal
+356,Farbalternativen
+357,Dificuldade ajustável
+358,Realizări Steam
+359,Доп. контент
+360,线上玩家对战
+361,統計
+362,Ek Yüksek Kaliteli Ses
+363,Ortak/Bölünmüş Ekran PvP
+364,Кросс-платформенный мультиплеер
+365,Köp i app
+366,Częściowa obsługa kontrolerów
+367,Zusatzinhalte
+368,Кооператив (по сети)
+369,Option souris uniquement
+370,Zakupy w aplikacji
+371,Valve Anti-Cheat enabled
+372,Скрытые субтитры
+373,完全支持控制器
+374,Yksinpeli
+375,Eşli
+376,Kooperacja
+377,"Indhold, der kan downloades"
+378,Nedlastbart innhold
+379,Kamerakomfort
+380,Online Co-op
+381,İstatistikler
+382,在手机上远程畅玩
+383,Remote Play Together
+384,Multijoueur
+385,Часткова підтримка контролерів
+386,Workshop Steam
+387,Однокористувацька гра
+388,Udostępnianie gier
+389,Herní obchod
+390,Compat. total con mando
+391,Conteúdo adicional
+392,Opções de legendas
+393,Compartilhamento em família
+394,Steam-pistetaulukot
+395,Sdílení v rodině
+396,Režim pro jednoho hráče
+397,Remote Play on Phone
+398,Самостоятелна игра
+399,PvP locale a schermo condiviso
+400,Som surround
+401,Compat. contrôleurs complète
+402,Un jucător
+403,Narrated Game Menus
+404,VR uniquement
+405,Remote Play no tablet
+406,Çok Oyunculu
+407,Egyjátékos
+408,Jogável sem precisar de reação rápida
+409,Multijoueur multiplateforme
+410,Familiedeling
+411,Kısmi kontrolcü desteği
+412,Samarbeid
+413,Steam работилница
+414,線上合作
+415,Remote Play on Tablet
+416,Mods (require HL2)
+417,Pályaszerkesztő
+418,Controles de volume independentes
+419,Steam-saavutukset
+420,Lisämateriaali
+421,Pencapaian Steam
+422,HDR disponible
+423,Game demo
+424,Çapraz Platform Çok Oyunculu
+425,Гравець проти гравця в локальній мережі
+426,Workshop di Steam
+427,Caméra et confort de vue
+428,Cooperativo en línea
+429,Мастерская Steam
+430,Inclusief leveleditor
+431,Steam Koleksiyon Kartları
+432,Steam-prestaties
+433,Семейный доступ
+434,Steam карти за размяна
+435,包含关卡编辑器
+436,Shared/Split Screen PvP
+437,Remote Play auf Tablets
+438,Online kooperace
+439,Plattformübergreifender Mehrspieler
+440,Käufe im Spiel
+441,Remote Play na telefonie
+442,Steam-samlekort
+443,Letölthető tartalom
+444,بطاقات المقايضة في Steam
+458,اللعب عن بُعد على الجهاز اللوحي
+459,Közös/osztott képernyős
+465,Platformok közti többjátékos
+466,Teljes játékvezérlő-támogatás
+473,اللعب الجماعي عبر المنصات
+474,نظام Valve ضد الغش مفعّل
+482,HDR támogatás
+492,Alkalmazáson belüli vásárlások
+495,جدول Steam الزمني
+500,اللعب الجماعي
+511,Közös/osztott képernyős PvP
+512,اللعب عن بُعد على التلفاز
+517,عمليات الشراء داخل التطبيق
+519,ورشة Steam
+528,الإحصاءات
+530,Többjátékos
+531,اللعب عن بُعد على الجوال
+533,Remote Play tévén

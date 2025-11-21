@@ -8,14 +8,28 @@ Ensure your files are arranged as follows:
 
 ```
 .
+airflow,dev/
+│
 ├── dags/
-│   └── api_to_postgres_etl.py
+│   └── steam_etl.py   
 ├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
+├── plugins/
+├── steam_dataset_2025.csv/
+│   ├── applications.csv
+│   ├── application_categories.csv
+│   ├── application_developers.csv
+│   ├── application_genres.csv
+│   ├── application_platforms.csv
+│   ├── application_publishers.csv
+│   ├── categories.csv
+│   ├── developers.csv
+│   ├── genres.csv
+│   ├── platforms.csv
+│   ├── publishers.csv
+│   └── reviews.csv                   
+│
+├── requirements.txt           
+├── README.md                   
 ```
 
 ## Step 1: Update .env File
@@ -78,7 +92,7 @@ This is the most important step for the ETL to work. You need to tell Airflow ho
 ## Step 5: Run Your ETL DAG
 
 1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
+2. Find the `steam_etl` DAG
 3. Click the **Play** button (▶) on the right to trigger a manual run
 4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
 
