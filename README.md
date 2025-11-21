@@ -93,8 +93,12 @@ Airflow DAG -автоматизация загрузки, трансформац
 ## Данные
 
 Данные проекта взяты из публичного датасета на Kaggle: The Movies Dataset
-https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset/data?select=movies_metadata.csv 
 
+необходимо скачать CSV-файлы и положить их в папку `dags/files`:
+/movies_metadata.csv/movies_metadata.csv
+https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset/data?select=movies_metadata.csv 
+/ratings.csv/ratings.csv 
+https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset/data?select=ratings.csv 
 ## Используются файлы:
 movies_metadata.csv - информация о фильмах: title, genres, release_date, budget, revenue, tagline и др.
 ratings.csv -пользовательские рейтинги: userId, movieId, rating, timestamp.
