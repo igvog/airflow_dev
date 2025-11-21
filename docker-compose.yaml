@@ -23,7 +23,15 @@ x-airflow-common: &airflow-common
       pip install -r /requirements.txt;
       airflow db init;
       airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true;
-      (airflow webserver & airflow scheduler)
+      # Сразу пишу соединения к Postgres ETL
+        airflow connections add 'postgres_etl_target_conn' \
+          --conn-type 'postgres' \
+          --conn-host 'postgres-etl-target' \
+          --conn-login 'etl_user' \
+          --conn-password 'etl_pass' \
+          --conn-schema 'etl_db' \
+          --conn-port 5432 || true;
+        (airflow webserver & airflow scheduler)
 
 services:
   # Database for Airflow Metadata
