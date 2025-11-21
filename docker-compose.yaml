@@ -72,15 +72,25 @@ services:
     container_name: airflow_services
     ports:
       - "8080:8080"
+    
+    environment:
+      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+      AIRFLOW__SMTP__SMTP_PORT: 587
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: dzejnolla5@gmail.com
+      AIRFLOW__SMTP__SMTP_STARTTLS: True
+      AIRFLOW__SMTP__SMTP_USER: dzejnolla5@gmail.com
+      AIRFLOW__SMTP__SMTP_PASSWORD: woqu dhtz evxq alzj
     healthcheck:
       test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-webserver.pid ]"]
       interval: 10s
       timeout: 10s
       retries: 3
 
+
 volumes:
   airflow-db-data:
   etl-db-data:
+  
 
 networks:
   airflow_network:

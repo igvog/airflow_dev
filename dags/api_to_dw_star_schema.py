@@ -15,6 +15,7 @@ import logging
 
 # Default arguments
 default_args = {
+    
     'owner': 'airflow',
     'depends_on_past': False,
     'email_on_failure': False,
@@ -27,6 +28,7 @@ default_args = {
 with DAG(
     'api_to_dw_star_schema',
     default_args=default_args,
+    is_paused_upon_creation=True,
     description='ETL pipeline: API → Postgres → Star Schema DW',
     schedule_interval=timedelta(days=1),  # Run daily
     start_date=datetime(2024, 1, 1),
