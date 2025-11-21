@@ -44,7 +44,7 @@ with DAG(
     
     def create_staging_tables(**context):
         """Create staging tables for raw API data"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         
         # Drop existing staging tables
         drop_staging = """
@@ -119,7 +119,7 @@ with DAG(
     # ====================
     
     def fetch_api_data(**context):
-        """Fetch data from JSONPlaceholder API"""
+        """Fetch data from API"""
         base_url = "http://fastapi_app:8000"
 
         #TODO: implement offset and limit def: 100 100
@@ -173,7 +173,7 @@ with DAG(
     
     def load_order_items_to_staging(**context):
         """Load order_items data into staging table"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         order_items_data = context['ti'].xcom_pull(key='order_items_data', task_ids='fetch_api_data')
         
         for item in order_items_data:
@@ -272,7 +272,7 @@ with DAG(
     
     def load_customers_to_staging(**context):
         """Load customers data into staging table"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         customers_data = context['ti'].xcom_pull(key='customers_data', task_ids='fetch_api_data')
 
         for customer in customers_data:
@@ -314,7 +314,7 @@ with DAG(
     
     def load_sellers_to_staging(**context):
         """Load sellers data into staging table"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         sellers_data = context['ti'].xcom_pull(key='sellers_data', task_ids='fetch_api_data')
 
         for seller in sellers_data:
@@ -355,7 +355,7 @@ with DAG(
     
     create_dw_schema = PostgresOperator(
         task_id='create_dw_schema',
-        postgres_conn_id='pg_conn',
+        postgres_conn_id=PG_CONN,
         sql="""
         -- Drop existing DW tables
         DROP TABLE IF EXISTS fact_order_items CASCADE;
@@ -408,7 +408,7 @@ with DAG(
     
     def populate_dim_customers(**context):
         """Populate customer dimension table from staging"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         
         sql = """
         INSERT INTO dim_customers (customer_id, unique_id, zip_code_prefix, city, state)
@@ -437,9 +437,8 @@ with DAG(
     
     def populate_dim_sellers(**context):
         """Populate sellers dimension table"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         
-        # Generate dates for the next 5 years
         sql = """
         INSERT INTO dim_sellers (
             seller_id, zip_code_prefix, city, state
@@ -508,7 +507,7 @@ with DAG(
 
     def populate_fact_order_items(**context):
         """Populate fact table with posts data"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         
         sql = """
             INSERT INTO fact_order_items (
