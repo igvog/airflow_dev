@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "airflow-dev"
+version = "0.1.0"
+description = "Airflow ETL to DW star schema"
+authors = ["Data Team <data@example.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+apache-airflow = "2.9.2"
+apache-airflow-providers-postgres = "5.11.1"
+requests = "^2.32.5"
+pendulum = "^3.1.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

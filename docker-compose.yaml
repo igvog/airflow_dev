@@ -11,7 +11,9 @@ x-airflow-common: &airflow-common
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
-    - ./requirements.txt:/requirements.txt
+    - ./data:/opt/airflow/data
+    - ./pyproject.toml:/opt/airflow/pyproject.toml
+    - ./poetry.lock:/opt/airflow/poetry.lock
   networks:
     - airflow_network # All services on this network
   depends_on:
@@ -20,7 +22,10 @@ x-airflow-common: &airflow-common
   command:
     - -c
     - |
-      pip install -r /requirements.txt;
+      pip install poetry==1.8.3;
+      cd /opt/airflow;
+      poetry config virtualenvs.create false;
+      poetry install --no-root;
       airflow db init;
       airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true;
       (airflow webserver & airflow scheduler)

@@ -1,129 +1,86 @@
-# Airflow ETL Demo Setup
+# Airflow ETL → DW (Star Schema)
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+Проект поднимает Airflow 2.9.2 (Docker) и DAG `api_to_dw_star_schema`, который выгружает данные из публичного API JSONPlaceholder, складывает их в Postgres и строит звёздную схему (staging → dims/fact).
 
-## Project Structure
+## Olist DAG (olist_to_dw_star_schema)
+- Датасет Olist скачивается в `data/olist` (монтируется как `/opt/airflow/data/olist` в контейнере). Чтобы перекачать файлы, передайте параметр `refresh_data_files=true` при запуске DAG.
+- DAG: `olist_to_dw_star_schema`. Параметры: `run_date` (логическая дата загрузки, по умолчанию `2024-01-01`), `full_refresh` (по умолчанию `true`), `refresh_data_files` (по умолчанию `false`).
+- Таблицы: staging (`staging_*`), затем dim (`dim_customers`, `dim_sellers`, `dim_products`, `dim_dates`) и факты (`fact_order_items`, `fact_payments`) в базе `postgres_etl_target`.
+- Для backfill: Trigger DAG с нужным `run_date` или `airflow dags backfill`; при `full_refresh=true` staging/dim/fact таблицы пересоздаются.
 
-Ensure your files are arranged as follows:
+## Что внутри
+- `dags/api_to_dw_star_schema.py` — параметризованный DAG (поддержка backfill/refill, дата запуска через `run_date`, алерты, логи).
+- `docker-compose.yaml` + `.env.example` — окружение Airflow + отдельный Postgres для витрины.
+- `pyproject.toml`, `poetry.lock` — зависимости через Poetry, `requirements.txt` экспортирован для отладки вне контейнера.
+- `plugins/.gitkeep` — заготовка под плагины.
 
-```
-.
-├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
-```
+## Быстрый старт
+Требования: Docker Desktop, Docker Compose, Python 3.10+ (только если хотите управлять зависимостями локально).
 
-## Step 1: Update .env File
-
-Before you start, find your local user ID by running this in your terminal:
-
+1) Склонировать/развернуть ветку `final-project` и перейти в каталог:
 ```bash
-id -u
+cd airflow_dev-main
 ```
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
-
-## Step 2: Start the Environment
-
-With Docker Desktop running, open a terminal in the project directory and run:
-
+2) Создать `.env`:
 ```bash
-docker-compose up -d
+cp .env.example .env
+# На Linux/macOS: заменить AIRFLOW_UID на вывод `id -u`
+# При необходимости указать ALERT_EMAILS через запятую
 ```
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
+3) Поднять окружение (Docker Desktop должен быть запущен):
+```bash
+docker-compose up --build -d
+```
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+Airflow UI: http://localhost:8080 (логин/пароль: `admin` / `admin`).  
+Postgres витрины: `localhost:5433`, БД `etl_db`, пользователь `etl_user`, пароль `etl_pass`.
 
-## Step 3: Access Airflow
+## Параметры DAG
+- `run_date` — логическая дата загрузки (например, `2024-01-01`). По умолчанию берётся `data_interval_end`, поэтому backfill работает штатно.
+- `full_refresh` — `true/false`, пересоздавать staging и витрину перед загрузкой (по умолчанию `true`).
+- Подключение к БД создаётся автоматически, если в `.env` есть `AIRFLOW_CONN_POSTGRES_ETL_TARGET_CONN=postgresql+psycopg2://etl_user:etl_pass@postgres-etl-target:5432/etl_db`. Альтернатива — завести connection `postgres_etl_target_conn` через UI **Admin → Connections** (те же параметры).
 
-Open your web browser and go to:
+## Backfill / re-fill
+- Запуск за конкретную дату через UI: **Trigger DAG** → задать `run_date`.
+- Серия дат через CLI контейнера:
+```bash
+docker exec -it airflow_services \
+  airflow dags backfill api_to_dw_star_schema \
+  -s 2024-01-01 -e 2024-01-05
+```
+Перезапуск за день: удалить дагран в UI или выполнить backfill тем же диапазоном — таблицы staging/drop перезаливка обеспечивают идемпотентность.
 
-**http://localhost:8080**
+## Структура данных
+- Staging: `staging_posts`, `staging_users`, `staging_comments` (сырые данные + `loaded_at` по параметру даты).
+- Dimensions: `dim_users`, `dim_dates`.
+- Fact: `fact_posts` (метрики: длина текста, word count, количество комментариев).
 
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
+## Алерты и логирование
+- Логи на уровне DAG-а через стандартный Airflow логгер.
+- При фейле таска вызывает `_alert_on_failure` и шлёт письмо на `ALERT_EMAILS` (нужен настроенный `smtp_default` или иной e-mail backend в Airflow).
 
-## Step 4: Create the Postgres Connection
+## Работа с зависимостями (Poetry)
+В контейнере выполняется `poetry install --no-root` (см. `docker-compose.yaml`).  
+Актуализация зависимостей:
+```bash
+poetry lock
+poetry export -f requirements.txt --without-hashes -o requirements.txt
+```
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
-
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
-
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
-
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
-
-## Step 5: Run Your ETL DAG
-
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
-
-## Step 6: Verify the Data
-
-How do you know it worked? Let's connect to the target database and check.
-
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
-
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
-
-Once connected, run this SQL query:
-
+## Проверка результата
+1) В UI включить DAG `api_to_dw_star_schema` и сделать Trigger.
+2) Убедиться, что задачи зелёные (скриншот для отчёта).
+3) Проверить данные:
 ```sql
-SELECT * FROM users;
+SELECT COUNT(*) FROM staging_posts;
+SELECT * FROM fact_posts ORDER BY post_id LIMIT 5;
 ```
+4) Для отчёта — скриншоты UI (grid/graph + расписание) и таблиц (`staging_*`, `dim_*`, `fact_posts`).
 
-You should see the 10 user records from the API! 🎉
-
-## Stopping the Environment
-
-To stop all the containers, run:
-
+## Остановка
 ```bash
-docker-compose down
+docker-compose down      # остановить
+docker-compose down -v   # остановить и удалить данные в volume
 ```
-
-To stop and remove the database volumes (deleting all your data), run:
-
-```bash
-docker-compose down -v
-```
-
-
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
-
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
