@@ -1,2 +1,5 @@
 apache-airflow-providers-postgres
 requests
+kaggle
+python-dotenv
+pandas

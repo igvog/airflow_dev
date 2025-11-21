@@ -12,6 +12,7 @@ x-airflow-common: &airflow-common
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/requirements.txt
+    - ./data:/opt/airflow/data
   networks:
     - airflow_network # All services on this network
   depends_on:
