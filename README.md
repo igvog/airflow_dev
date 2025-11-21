@@ -1,129 +1,205 @@
-# Airflow ETL Demo Setup
+# ETL Pipeline: SQLite to PostgreSQL Data Warehouse
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+KaspiLab: Data Factory - Final Project
+
+## Overview
+
+This project implements a complete ETL pipeline that extracts data from SQLite (Olist e-commerce dataset), loads it into PostgreSQL staging tables, and transforms it into a star schema Data Warehouse with dimensions and fact tables.
+
+## Architecture
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────────────────┐
+│   SQLite    │────▶│   Staging   │────▶│      Data Warehouse     │
+│  (Source)   │     │   Tables    │     │  (Star Schema)          │
+│             │     │             │     │                         │
+│ • orders    │     │ • stage_*   │     │ • dim_date              │
+│ • items     │     │             │     │ • dim_customers         │
+│ • customers │     │             │     │ • dim_products          │
+│ • products  │     │             │     │ • dim_sellers           │
+│ • sellers   │     │             │     │ • fact_order_items      │
+└─────────────┘     └─────────────┘     └─────────────────────────┘
+```
 
 ## Project Structure
-
-Ensure your files are arranged as follows:
 
 ```
 .
 ├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
+│   ├── etl_dwh_final.py          # Main DAG file
+│   ├── files/
+│   │   └── olist.sqlite          # Source database
+│   └── logs/
+│       └── etl_dwh_final.log     # ETL logs
+├── logs/                          # Airflow logs
+├── plugins/
 ├── docker-compose.yml
 ├── .env
 ├── requirements.txt
 └── README.md
 ```
 
-## Step 1: Update .env File
+## Prerequisites
 
-Before you start, find your local user ID by running this in your terminal:
+- Docker & Docker Desktop
+- Git
+- **Note on `olist.sqlite`**: If you plan to use the SQLite database instead of the CSV files, download the `olist.sqlite` file from [here](https://www.kaggle.com/datasets/terencicp/e-commerce-dataset-by-olist-as-an-sqlite-database) and place it in the `dags/files/` folder.
 
+
+## Quick Start
+
+### Step 1: Clone and Setup
+
+```bash
+git clone <repository-url>
+cd <project-folder>
+git checkout feature/etl-dwh-final-project
+```
+
+### Step 2: Configure Environment
+
+Get your user ID:
 ```bash
 id -u
 ```
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+Update `.env` file with your user ID to prevent permission issues.
 
-## Step 2: Start the Environment
-
-With Docker Desktop running, open a terminal in the project directory and run:
+### Step 3: Start Services
 
 ```bash
 docker-compose up -d
 ```
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
+Wait 2-3 minutes for initialization.
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+### Step 4: Access Airflow UI
 
-## Step 3: Access Airflow
+Open **http://localhost:8080**
 
-Open your web browser and go to:
-
-**http://localhost:8080**
-
-Log in with the default credentials (set in the `docker-compose.yml`):
+Login credentials:
 - **Username:** `admin`
 - **Password:** `admin`
 
-## Step 4: Create the Postgres Connection
+### Step 5: Create PostgreSQL Connection
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
+Navigate to **Admin → Connections → +**
 
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
+| Field | Value |
+|-------|-------|
+| Connection Id | `postgres_etl_target_conn` |
+| Connection Type | `Postgres` |
+| Host | `postgres-etl-target` |
+| Schema | `etl_db` |
+| Login | `etl_user` |
+| Password | `etl_pass` |
+| Port | `5432` |
 
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
+Click **Test** → **Save**
 
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
+### Step 6: Run the DAG
 
-## Step 5: Run Your ETL DAG
+1. Find `etl_dwh_final_project` DAG
+2. Enable it (toggle ON)
+3. Click **Play** button (▶) to trigger manually
+4. Monitor progress in Graph view
 
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
+## DAG Tasks Flow
 
-## Step 6: Verify the Data
+```
+extract_from_sqlite
+        │
+        ▼
+create_staging_tables
+        │
+        ▼
+┌───────┴───────┬───────────┬───────────┬───────────┐
+▼               ▼           ▼           ▼           ▼
+load_orders  load_items  load_cust  load_prod  load_sellers
+        │               │           │           │
+        └───────┬───────┴───────────┴───────────┘
+                ▼
+        create_dwh_schema
+                │
+        ┌───────┴───────┬───────────┬───────────┐
+        ▼               ▼           ▼           ▼
+   dim_date      dim_customers  dim_products  dim_sellers
+        │               │           │           │
+        └───────┬───────┴───────────┴───────────┘
+                ▼
+      populate_fact_order_items
+```
 
-How do you know it worked? Let's connect to the target database and check.
+## Data Warehouse Schema
 
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
+### Dimensions
+- **dim_date** - Date attributes (day, month, year, quarter, weekend flag)
+- **dim_customers** - Customer information and location
+- **dim_products** - Product details and categories
+- **dim_sellers** - Seller information and location
 
+### Fact Table
+- **fact_order_items** - Order transactions with foreign keys to dimensions
+
+## Verify Results
+
+Connect to PostgreSQL:
 - **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
+- **Port:** `5433`
 - **Database:** `etl_db`
 - **User:** `etl_user`
 - **Password:** `etl_pass`
 
-Once connected, run this SQL query:
-
+Sample queries:
 ```sql
-SELECT * FROM users;
+-- Check fact table
+SELECT COUNT(*) FROM fact_order_items;
+
+-- Check dimensions
+SELECT COUNT(*) FROM dim_customers;
+SELECT COUNT(*) FROM dim_products;
+
+-- Sample analytics query
+SELECT 
+    dd.year,
+    dd.month,
+    COUNT(*) as orders,
+    SUM(f.total_amount) as revenue
+FROM fact_order_items f
+JOIN dim_date dd ON f.order_date_key = dd.date_key
+GROUP BY dd.year, dd.month
+ORDER BY dd.year, dd.month;
 ```
 
-You should see the 10 user records from the API! 🎉
+## Features Implemented
+
+- ✅ SQLite extraction with CSV fallback
+- ✅ Staging layer with data validation
+- ✅ Star schema DWH (4 dimensions + 1 fact)
+- ✅ Rotating file logging (5MB, 3 backups)
+- ✅ Error handling with try-catch
+- ✅ Idempotent loads (ON CONFLICT DO NOTHING)
+- ✅ Column mapping for data quality issues
 
 ## Stopping the Environment
 
-To stop all the containers, run:
-
 ```bash
+# Stop containers
 docker-compose down
-```
 
-To stop and remove the database volumes (deleting all your data), run:
-
-```bash
+# Stop and remove volumes (deletes all data)
 docker-compose down -v
 ```
 
+## Troubleshooting
 
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
+**Connection refused error:**
+- Ensure Docker containers are running: `docker ps`
+- Check connection settings match exactly
 
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
+**Permission denied:**
+- Update `.env` with correct user ID from `id -u`
+
+**Empty tables:**
+- Verify `olist.sqlite` exists in `dags/files/`
+- Check logs: `dags/logs/etl_dwh_final.log`
