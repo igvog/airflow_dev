@@ -1,10 +1,5 @@
 """
-Refactored DAG: Kaggle CSV -> Postgres DW (star schema)
-- robust, idempotent, handles European CSV (delimiter=';', price with comma, dd.mm.YYYY HH:MM)
-- creates ~/.kaggle/kaggle.json from env vars
-- uses PostgresHook for DB ops and psycopg2.execute_values for fast bulk load
-- avoids ON CONFLICT "affect row a second time" by aggregating/grouping / SELECT DISTINCT
-- params: full_refresh (bool) via dag_run.conf
+Переделанный по шаблону DAG: Kaggle CSV -> Postgres DW (star схема)
 """
 
 from datetime import datetime, timedelta
@@ -14,19 +9,22 @@ import logging
 import csv
 import datetime as dt
 
+from telegram_alerts import telegram_alert
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-# Optional: change to your connection id
+# Опционально: можете поменять название соединения (не забудьте сделать то же самое в docker-compose.yaml)
 POSTGRES_CONN_ID = "postgres_etl_target_conn"
 
-# Dataset info
+# Информация про датасет
 KAGGLE_DATASET = os.getenv("KAGGLE_DATASET", "aslanahmedov/market-basket-analysis")
 CSV_NAME = "Assignment-1_Data.csv"
 DOWNLOAD_DIR = "/tmp/kaggle_download"
 
 default_args = {
+    "on_failure_callback": telegram_alert,
     "owner": "airflow",
     "depends_on_past": False,
     "email_on_failure": False,
@@ -39,10 +37,7 @@ def send_failure_alert(context):
     logging.error("Task failed: %s", context.get("exception"))
 
 
-def prepare_kaggle_credentials():
-    """
-    Create ~/.kaggle/kaggle.json from env vars KAGGLE_USERNAME and KAGGLE_KEY
-    """
+def prepare_kaggle_token():
     username = os.getenv("KAGGLE_USERNAME")
     key = os.getenv("KAGGLE_KEY")
     if not username or not key:
@@ -59,8 +54,8 @@ def prepare_kaggle_credentials():
 
 def download_from_kaggle(**context):
     """
-    Download dataset using kaggle CLI into DOWNLOAD_DIR and push csv_path to XCom.
-    If local file exists in /opt/airflow/data/Assignment-1_Data.csv, prefer it (convenience).
+    Скачивает датасет с Kaggle и пушит в XCom.
+    Если локальный файл /opt/airflow/data/Assignment-1_Data.csv уже существует, предпочтение ему (для удобства).
     """
     import subprocess
 
@@ -70,7 +65,7 @@ def download_from_kaggle(**context):
         logging.info("Found local CSV at %s — skipping Kaggle download", local_path)
         return local_path
 
-    prepare_kaggle_credentials()
+    prepare_kaggle_token()
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -88,10 +83,10 @@ def download_from_kaggle(**context):
         logging.error("Kaggle download failed: %s", e)
         raise
 
-    # find csv
+    # найти csv
     csv_path = os.path.join(DOWNLOAD_DIR, CSV_NAME)
     if not os.path.exists(csv_path):
-        # search nested
+        
         for root, _, files in os.walk(DOWNLOAD_DIR):
             if CSV_NAME in files:
                 csv_path = os.path.join(root, CSV_NAME)
@@ -183,14 +178,14 @@ def _create_tables():
     logging.info("Ensured staging/dim/fact tables exist")
 
 
-def create_staging_and_dw(**context):
+def create_staging(**context):
     _create_tables()
 
 
 def load_csv_to_staging(**context):
     """
-    Read CSV (delimiter=';'), normalize columns, convert price and date, then bulk insert into staging_sales.
-    Uses psycopg2.extras.execute_values for speed.
+    Читает csv, нормализация, конвертация price и date, затем insert into staging_sales.
+    Для скорости используется psycopg2.extras.execute_values.
     """
     from psycopg2.extras import execute_values
     import psycopg2
@@ -282,11 +277,11 @@ def load_csv_to_staging(**context):
 
 def populate_dim_and_fact(**context):
     """
-    Robust population of dims and fact:
-    - dim_customers: GROUP BY customer_id -> single country (MAX)
-    - dim_items: GROUP BY TRIM(item_name) -> avg price
-    - dim_dates: GROUP BY DATE(txn_ts)
-    - fact_sales: build distinct src and insert ON CONFLICT update
+    Надежная выборка параметров и фактов:
+        - dim_customers: GROUP BY customer_id -> одна страна (MAX.)
+        - dim_items: GROUP BY TRIM(item_name) -> средняя цена
+        - dim_dates: GROUP BY DATE(txn_ts)
+        - fact_sales: создание отдельного источника и ON CONFLICT
     """
     hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
     dag_conf = context.get("dag_run").conf if context.get("dag_run") else {}
@@ -399,13 +394,13 @@ def validate_row_counts(**context):
 
 
 with DAG(
-    "kaggle_sales_to_dw_refactor",
+    "api_market_sales_pipeline",
     default_args=default_args,
     description="Refactored: Kaggle CSV → Postgres DW",
     schedule_interval="@daily",
-    start_date=datetime(2024, 1, 1),
+    start_date=datetime(2025, 1, 1),
     catchup=False,
-    tags=["kaggle", "etl", "dw"],
+    tags=["etl", "api", "market"],
     on_failure_callback=send_failure_alert,
 ) as dag:
 
@@ -416,8 +411,8 @@ with DAG(
     )
 
     t2_create = PythonOperator(
-        task_id="create_staging_and_dw",
-        python_callable=create_staging_and_dw,
+        task_id="create_staging",
+        python_callable=create_staging,
     )
 
     t3_load_staging = PythonOperator(
