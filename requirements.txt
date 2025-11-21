@@ -1,3 +1,5 @@
 apache-airflow-providers-postgres
 requests
 kaggle
+psycopg2-binary
+python-dotenv
