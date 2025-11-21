@@ -9,6 +9,7 @@ from airflow.providers.postgres.operators.postgres import PostgresOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from kagglehub import dataset_download
 
+from tg_bot import notify_dag_success, notify_task_failure
 
 
 # Default arguments
@@ -29,6 +30,8 @@ with DAG(
     schedule_interval='@daily',  # Run daily
     start_date=datetime(2024, 1, 1),
     catchup=False,
+    on_success_callback=notify_dag_success,
+    on_failure_callback=notify_task_failure,
     tags=['etl'],
 ) as dag:
 
