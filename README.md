@@ -1,20 +1,4 @@
-# Airflow ETL Project — Online Retail II Dataset
-
-### This Online Retail II data set contains all the transactions occurring for a UK-based and registered, non-store online retail between 01/12/2009 and 09/12/2011.The company mainly sells unique all-occasion gift-ware. Many customers of the company are wholesalers.
-
-## Dataset
-
-The `online_retail_II.csv` dataset contains:
-
-- `Invoice` — Invoice number
-- `StockCode` — Product code
-- `Description` — Product description
-- `Quantity` — Number of items purchased
-- `InvoiceDate` — Date of transaction
-- `Price` — Price per item
-- `CustomerID` — Customer identifier
-- `Country` — Customer country
-
+# Airflow ETL Project
 
 This guide explains how to set up and run the Airflow environment defined in `docker-compose.yml` for the Online Retail II ETL pipeline.
 
@@ -129,17 +113,6 @@ Connection details (host from host machine):
 - User: `etl_Balga` 
 - Password: `etl_pass`
 
-## DAG Overview
-
-`project_api_to_dwh` DAG includes the following tasks:
-
-1. `fetch_data` — Read CSV data into memory
-2. `create_staging_table` — Create staging table in Postgres ETL DB
-3. `load_data_to_staging` — Insert data into staging table
-4. `create_dw_schema` — Create dimensions and fact tables
-5. `load_dw` — Load staging data into dimensional warehouse tables
-6. `success_notification` — Send Telegram notification upon success
-
 
 Example queries:
 
@@ -232,3 +205,4 @@ Notes:
 Security
 - Keep TOKEN and CHAT_ID out of version control (.env should be in .gitignore).
 - Rotate the token if it is accidentally leaked.
+
