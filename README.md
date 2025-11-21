@@ -183,3 +183,52 @@ Store sensitive values in the `.env` file:
 - Docker Compose
 - Python 3.12+ (for editing DAGs and requirements)
 - SQL client (optional, for checking Postgres data)
+
+## Telegram bot alerts
+
+Add a Telegram bot to receive ETL run notifications.
+
+1. Create a bot
+- In Telegram chat with @BotFather run /newbot and follow prompts.
+- Copy the bot token (TELEGRAM_TOKEN).
+
+2. Obtain your chat id
+- Send any message to the bot (or add it to a group).
+- Retrieve the chat id:
+   - Via curl:
+      ```bash
+      curl -s "https://api.telegram.org/bot<TELEGRAM_TOKEN>/getUpdates" | jq
+      ```
+      Look for "chat":{"id":...} in the response.
+   - Or use a helper bot like @userinfobot.
+
+Notes:
+- For groups the chat id is usually negative (e.g., -123456789).
+- For channels the bot must be made an admin to post.
+
+3. Configure the project
+- Add the values to your .env:
+   ```
+   TELEGRAM_TOKEN=your_telegram_bot_token
+   TELEGRAM_CHAT_ID=your_telegram_chat_id
+   ```
+- Restart the Airflow containers so the environment variables are loaded:
+   ```bash
+   docker-compose down && docker-compose up -d
+   ```
+
+4. Test sending a message
+- From your host (or inside the Airflow container) run:
+   ```bash
+   curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+      -d chat_id="${TELEGRAM_CHAT_ID}" \
+      -d text="Airflow ETL test message"
+   ```
+- A successful response will include "ok":true and the sent message.
+
+5. Integration with the DAG
+- The DAG's `success_notification` task reads TELEGRAM_TOKEN and TELEGRAM_CHAT_ID from the environment and posts a message when the pipeline succeeds. Ensure these env vars are present in the Airflow container environment (via .env / docker-compose) so notifications are delivered.
+
+Security
+- Keep TOKEN and CHAT_ID out of version control (.env should be in .gitignore).
+- Rotate the token if it is accidentally leaked.
