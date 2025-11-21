@@ -1,0 +1,14 @@
+# Ignore datasets
+airflow/dags/datasets/
+
+# Ignore datasets anywhere under `airflow/dags`
+airflow/dags/**/datasets/
+
+# Ignore Airflow logs
+airflow/logs/
+airflow.db
+airflow.sqlite
+airflow.cfg
+
+# Ignore top-level run logs directory
+/logs/
