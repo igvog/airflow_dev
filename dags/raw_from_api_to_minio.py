@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import requests
 import json
 
+# --- Аргументы DAG по умолчанию ---
 ROCKETS_URL = "https://api.spacexdata.com/v4/rockets"
 LAUNCHPADS_URL = "https://api.spacexdata.com/v4/launchpads"
 LAUNCHES_URL = "https://api.spacexdata.com/v4/launches"
@@ -27,10 +28,15 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
+# --- Основная функция ETL ---
 def fetch_and_upload_rockets(**context):
-    # 1. Получаем данные с API
+    """
+    1. Получаем данные с API SpaceX
+    2. Конвертируем данные в JSON
+    3. Загружаем данные в MinIO через S3Hook
+    """
     try:
-        
+        # --- Получение данных ---
         response = requests.get(ROCKETS_URL)
         response.raise_for_status()
         rockets_data = response.json()
@@ -55,7 +61,7 @@ def fetch_and_upload_rockets(**context):
         logging.error(f"Error fetching API data: {str(e)}")
         raise
     
-    # 2. 
+    # --- Конвертация данных в JSON ---
     json_rockets_data = json.dumps(rockets_data, indent=4)
     json_launchpads_data = json.dumps(launchpads_data, indent=4)
     json_launches_data = json.dumps(launches_data, indent=4)
@@ -68,7 +74,7 @@ def fetch_and_upload_rockets(**context):
         "raw_payloads.json": json_payloads_data
         }
     
-    # 3. Загружаем в MinIO через S3Hook
+    # --- Загрузка данных в MinIO ---
     s3 = S3Hook(aws_conn_id="minio_conn")
     for key, string in json_dict.items():
         s3.load_string(

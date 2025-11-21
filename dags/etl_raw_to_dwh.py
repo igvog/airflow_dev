@@ -1,15 +1,28 @@
+"""
+ETL pipeline: API → MinIO → Postgres → Star Schema DW
+Описание:
+1. Создаём staging таблицы для временного хранения данных из MinIO
+2. Загружаем сырые JSON файлы из MinIO в staging таблицы
+3. Создаём dimension и fact таблицы в DWH
+4. Заполняем dimension таблицы из staging
+5. Заполняем fact таблицу из staging и dimension таблиц
+6. В конце DAG отправляет уведомление в Telegram о успешном завершении
+"""
+
 import logging
 import json
-from datetime import datetime, timedelta
+import requests
+import os
 
+from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
+# --- Константы ---
 BUCKET_NAME = "storage"
-
 FILE_NAME = {
     "rockets": "raw_rockets.json",
     "launchpads": "raw_launchpads.json",
@@ -24,14 +37,52 @@ DIM_TABLES = {
 
 FACT_TABLE = "fact_launches"
 
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+logger = logging.getLogger("airflow.task")
+
+# --- Функция отправки сообщений в Telegram ---
+def send_telegram_message(token, chat_id, message):
+    """Send notification message to Telegram"""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code != 200:
+            logging.error(f"Telegram API returned {response.status_code}: {response.text}")
+        else:
+            logging.info("Telegram message sent successfully")
+    except Exception as e:
+        logging.error(f"Failed to send Telegram message: {e}")
+
+# --- Функция алерта на ошибку таска ---        
+def task_failure_alert(context):
+    task_instance = context['task_instance']
+    dag_id = task_instance.dag_id
+    task_id = task_instance.task_id
+    execution_date = context['execution_date']
+    log_url = task_instance.log_url
+
+    msg = f"❌ Task Failed\nDAG: {dag_id}\nTask: {task_id}\nExecution Date: {execution_date}\nLog: {log_url}"
+    send_telegram_message(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
+
+# --- Default args для DAG ---
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 0,
+    'on_failure_callback': task_failure_alert,
     'retry_delay': timedelta(minutes=5),
 }
+
+# --- DAG ---
 with DAG(
     'etl_raw_to_dwh',
     default_args=default_args,
@@ -42,92 +93,98 @@ with DAG(
     tags=['etl', 'api', 'datawarehouse', 'star-schema'],
 ) as dag:
     
+    # --- Создание staging таблиц ---
     def create_staging_tables(**context):
-            """Create staging tables for raw Minio data"""
-            hook = PostgresHook(postgres_conn_id='pg_conn')
-            
-            # Drop existing staging tables
-            drop_staging = """
-            DROP TABLE IF EXISTS staging_rockets CASCADE;
-            DROP TABLE IF EXISTS staging_launchpads  CASCADE;
-            DROP TABLE IF EXISTS staging_launches CASCADE;
-            DROP TABLE IF EXISTS staging_payloads;
-            """
-            
-            # Create staging tables
-            create_staging = """
-            CREATE TABLE IF NOT EXISTS staging_rockets (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                type TEXT,
-                active BOOLEAN,
-                stages INT,
-                boosters INT,
-                cost_per_launch BIGINT,
-                success_rate_pct INT,
-                first_flight DATE,
-                country TEXT,
-                company TEXT,
-                raw_data JSONB,
-                loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            
-            CREATE TABLE IF NOT EXISTS staging_payloads (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                type TEXT,
-                mass_kg DOUBLE PRECISION,
-                mass_lbs DOUBLE PRECISION,
-                customers TEXT[],            -- массив заказчиков
-                orbit TEXT,
-                launch_id TEXT,              -- ссылка на запуск (launches.id)
-                rocket_id TEXT,              -- ссылка на ракету (rockets.id)
-                raw_data JSONB,
-                loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            
-            CREATE TABLE IF NOT EXISTS staging_launchpads (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                full_name TEXT,
-                locality TEXT,
-                region TEXT,
-                latitude DOUBLE PRECISION,
-                longitude DOUBLE PRECISION,
-                launch_attempts INT,
-                launch_successes INT,
-                status TEXT,
-                raw_data JSONB,
-                loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            
-            CREATE TABLE IF NOT EXISTS staging_launches (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                date_utc TIMESTAMP,
-                rocket TEXT,
-                launchpad TEXT,
-                success BOOLEAN,
-                payload_ids TEXT[],
-                cores JSONB,
-                failures JSONB,
-                raw_data JSONB,
-                loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            """
-            
+        """Create staging tables for raw Minio data"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
+        
+        # Drop existing staging tables
+        drop_staging = """
+        DROP TABLE IF EXISTS staging_rockets CASCADE;
+        DROP TABLE IF EXISTS staging_launchpads  CASCADE;
+        DROP TABLE IF EXISTS staging_launches CASCADE;
+        DROP TABLE IF EXISTS staging_payloads;
+        """
+        
+        # Create staging tables
+        create_staging = """
+        CREATE TABLE IF NOT EXISTS staging_rockets (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            type TEXT,
+            active BOOLEAN,
+            stages INT,
+            boosters INT,
+            cost_per_launch BIGINT,
+            success_rate_pct INT,
+            first_flight DATE,
+            country TEXT,
+            company TEXT,
+            raw_data JSONB,
+            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE TABLE IF NOT EXISTS staging_payloads (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            type TEXT,
+            mass_kg DOUBLE PRECISION,
+            mass_lbs DOUBLE PRECISION,
+            customers TEXT[],            -- массив заказчиков
+            orbit TEXT,
+            launch_id TEXT,              -- ссылка на запуск (launches.id)
+            rocket_id TEXT,              -- ссылка на ракету (rockets.id)
+            raw_data JSONB,
+            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE TABLE IF NOT EXISTS staging_launchpads (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            full_name TEXT,
+            locality TEXT,
+            region TEXT,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            launch_attempts INT,
+            launch_successes INT,
+            status TEXT,
+            raw_data JSONB,
+            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE TABLE IF NOT EXISTS staging_launches (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            date_utc TIMESTAMP,
+            rocket TEXT,
+            launchpad TEXT,
+            success BOOLEAN,
+            payload_ids TEXT[],
+            cores JSONB,
+            failures JSONB,
+            raw_data JSONB,
+            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+        
+        try:
             hook.run(drop_staging)
             hook.run(create_staging)
             logging.info("Staging tables created successfully")
+        except Exception as e:
+            logging.error(f"Failed to create staging tables: {e}")
+            raise
         
     create_staging = PythonOperator(
         task_id='create_staging_tables',
         python_callable=create_staging_tables,
     )
     
-# ============ROCKETS====================================
+    # --- Загрузка данных из MinIO в staging ---
+    # ============ROCKETS==================================== 
     def load_rockets_to_staging(**context):
-        """Load rockets data into staging table"""
+        """Generic function to load JSON from MinIO into staging"""
         hook = PostgresHook(postgres_conn_id='pg_conn')
         s3 = S3Hook(aws_conn_id="minio_conn")
         
@@ -161,6 +218,7 @@ with DAG(
                 raw_data = EXCLUDED.raw_data,
                 loaded_at = CURRENT_TIMESTAMP;
             """
+        
             hook.run(
                 insert_query,
                 parameters={
@@ -185,7 +243,7 @@ with DAG(
         python_callable=load_rockets_to_staging,
     )
     
-# ============PAYLOADS====================================    
+    # ============PAYLOADS====================================    
     def load_payloads_to_staging(**context):
         hook = PostgresHook(postgres_conn_id='pg_conn')
         s3 = S3Hook(aws_conn_id="minio_conn")
@@ -242,7 +300,7 @@ with DAG(
         task_id='load_payloads_to_staging',
         python_callable=load_payloads_to_staging,
     )
-# ============LAUNCHPADS====================================         
+    # ============LAUNCHPADS====================================         
     def load_launchpads_to_staging(**context):
         hook = PostgresHook(postgres_conn_id='pg_conn')
         s3 = S3Hook(aws_conn_id="minio_conn")
@@ -303,7 +361,7 @@ with DAG(
         task_id='load_launchpads_to_staging',
         python_callable=load_launchpads_to_staging,
     )
-# ============LAUNCHES====================================         
+    # ============LAUNCHES====================================         
     def load_launches_to_staging(**context):
         hook = PostgresHook(postgres_conn_id='pg_conn')
         s3 = S3Hook(aws_conn_id="minio_conn")
@@ -362,7 +420,7 @@ with DAG(
         python_callable=load_launches_to_staging,
     )
     
-# ============CREATE====================================     
+    # --- Создание DWH схемы ---     
     create_dw_schema = SQLExecuteQueryOperator(
         task_id='create_dw_schema',
         conn_id='pg_conn',
@@ -449,7 +507,9 @@ with DAG(
         CREATE INDEX IF NOT EXISTS idx_fact_launch_id ON fact_launches(launch_id);
         """,
     )
-# =================populate_dim_rockets================================================    
+
+    # --- Заполнение dimension таблиц ---
+    # =================populate_dim_rockets======================   
     def populate_dim_rockets(**context):
         """Populate rockets dimension table from staging"""
         hook = PostgresHook(postgres_conn_id='pg_conn')
@@ -494,7 +554,7 @@ with DAG(
         python_callable=populate_dim_rockets,
     )
    
-# =================populate_dim_launchpads=========================== 
+    # =================populate_dim_launchpads=========================== 
     def populate_dim_launchpads(**context):
         """Populate launchpads dimension table from staging"""
         hook = PostgresHook(postgres_conn_id='pg_conn')
@@ -529,7 +589,7 @@ with DAG(
         python_callable=populate_dim_launchpads,
     )
     
-# =================populate_dim_launchpads=========================== 
+    # =================populate_dim_launchpads=========================== 
     def populate_dim_payloads(**context):
         """Populate payloads dimension table from staging"""
         hook = PostgresHook(postgres_conn_id='pg_conn')
@@ -562,7 +622,9 @@ with DAG(
         task_id='populate_dim_payloads',
         python_callable=populate_dim_payloads,
     )
-# =================populate_fact_launches===========================    
+    
+    # --- Заполнение fact таблицы ---
+    # =================populate_fact_launches===========================    
     def populate_fact_launches(**context):
         """Populate fact table with launches data"""
         hook = PostgresHook(postgres_conn_id='pg_conn')
@@ -624,8 +686,27 @@ with DAG(
         task_id='populate_fact_launches',
         python_callable=populate_fact_launches,
     ) 
-
+    
+    # --- Алерт об успешном завершении DAG ---
+    def dag_success_alert(**context):
+        dag_id = context['dag'].dag_id
+        execution_date = context['execution_date']
+        
+        msg = f"✅ DAG Succeeded\nDAG: {dag_id}\nExecution Date: {execution_date}"
+        send_telegram_message(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
+        
+    dag_success_alert_task = PythonOperator(
+        task_id='dag_success_alert',
+        python_callable=dag_success_alert,
+    ) 
+    
+    # --- Task dependencies ---
     create_staging >> [load_rockets, load_payloads, load_launchpads, load_launches]
+    
     [load_rockets, load_payloads, load_launchpads, load_launches] >> create_dw_schema
+    
     create_dw_schema >> [populate_dim_rockets_task, populate_dim_launchpads_task, populate_dim_payloads_task ]
+    
     [populate_dim_rockets_task, populate_dim_launchpads_task, populate_dim_payloads_task ] >> populate_fact_launches_task
+    
+    populate_fact_launches_task >> dag_success_alert_task
