@@ -12,13 +12,12 @@ import pandas as pd
 import io
 import logging
 
-
 # ============================
 # FAILURE CALLBACK FUNCTION
 # ============================
 
 def log_failure(context):
-    """Writes task failure info into etl_error_logs table."""
+    """Записывает информацию о сбое таска в etl_error_logs table."""
     dag_id = context['dag'].dag_id
     task_id = context['task_instance'].task_id
     execution_date = context['execution_date']
@@ -65,9 +64,9 @@ with DAG(
     tags=['etl', 'covid', 'star-schema', 'logging'],
 ) as dag:
 
-    # ================
+    # ============================
     # ERROR LOG TABLE
-    # ================
+    # ============================
 
     create_error_log_table = PostgresOperator(
         task_id='create_error_log_table',
@@ -84,10 +83,11 @@ with DAG(
         );
         """
     )
+    # etl_error_logs: лог ошибок ETL, позволяет отслеживать сбои без проверки логов Airflow
 
-    # =====================
+    # ============================
     # STAGING TABLE
-    # =====================
+    # ============================
 
     create_staging_table = PostgresOperator(
         task_id='create_staging_table',
@@ -110,12 +110,14 @@ with DAG(
         );
         """
     )
+    # staging_covid: промежуточная таблица, хранит "сырые" данные для повторной обработки и трансформаций
 
-    # =====================
+    # ============================
     # FETCH + LOAD CSV
-    # =====================
+    # ============================
 
     def fetch_and_load_covid_data(**context):
+        """Скачивает CSV с COVID данными и загружает в staging_covid"""
         url = "https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv"
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
 
@@ -155,11 +157,11 @@ with DAG(
         task_id='fetch_and_load_covid_data',
         python_callable=fetch_and_load_covid_data,
     )
+    # fetch_and_load_covid_data: скачивание CSV и загрузка в staging_covid
 
-
-    # =====================
+    # ============================
     # CREATE DW TABLES
-    # =====================
+    # ============================
 
     create_dw_schema = PostgresOperator(
         task_id='create_dw_schema',
@@ -203,12 +205,16 @@ with DAG(
         );
         """
     )
+    # dim_country: справочник стран, избегаем повторного хранения названий стран
+    # dim_dates: календарная таблица для аналитики по датам
+    # fact_covid: фактологическая таблица с показателями COVID, ссылки на dim_country и dim_dates
 
-    # =====================
+    # ============================
     # POPULATE DIM COUNTRY
-    # =====================
+    # ============================
 
     def populate_dim_country(**context):
+        """Заполняет dim_country данными из staging_covid"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         sql = """
         INSERT INTO dim_country (iso_code, country_name, continent, population)
@@ -227,12 +233,14 @@ with DAG(
         task_id='populate_dim_country',
         python_callable=populate_dim_country,
     )
+    # populate_dim_country: заполнение справочника стран
 
-    # =====================
+    # ============================
     # POPULATE DIM DATES
-    # =====================
+    # ============================
 
     def populate_dim_dates(**context):
+        """Заполняет dim_dates уникальными датами из staging_covid"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         sql = """
         INSERT INTO dim_dates (date_key, full_date, year, month, day, quarter, day_of_week, is_weekend)
@@ -255,12 +263,14 @@ with DAG(
         task_id='populate_dim_dates',
         python_callable=populate_dim_dates,
     )
+    # populate_dim_dates: заполнение календарной таблицы
 
-    # =====================
+    # ============================
     # POPULATE FACT COVID
-    # =====================
+    # ============================
 
     def populate_fact_covid(**context):
+        """Заполняет fact_covid фактологическими данными"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         sql = """
         INSERT INTO fact_covid (
@@ -290,11 +300,11 @@ with DAG(
         task_id='populate_fact_covid',
         python_callable=populate_fact_covid,
     )
+    # populate_fact_covid: заполнение фактологической таблицы
 
-
-    # =====================
+    # ============================
     # TASK DEPENDENCIES
-    # =====================
+    # ============================
 
     create_error_log_table >> create_staging_table
     create_staging_table >> fetch_load_task
