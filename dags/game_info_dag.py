@@ -1,3 +1,9 @@
+"""
+ETL DAG: API to Data Warehouse Star Schema
+This DAG extracts data from kaggle using kagglehub, loads it into Postgres,
+and transforms it into a star schema data warehouse model.
+"""
+
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
@@ -34,7 +40,8 @@ with DAG(
     on_failure_callback=notify_task_failure,
     tags=['etl'],
 ) as dag:
-
+    
+    # ========== STAGING LAYER ==========
     drop_staging_tables = PostgresOperator(
         task_id='drop_staging_tables',
         postgres_conn_id='postgres_etl_target_conn',
@@ -348,6 +355,8 @@ with DAG(
             AND TRIM(publisher_name) <> '';
         """
     )
+
+    # ========== DATA WAREHOUSE LAYER (STAR SCHEMA) ==========
 
     drop_dim_tables = PostgresOperator(
         task_id='drop_dim_tables',
@@ -738,10 +747,14 @@ with DAG(
         python_callable=load_into_bridge_tables
     )
 
+    # ========== TASK DEPENDENCIES ==========
+
     chain(
+        # Staging layer
         drop_staging_tables, create_raw_games, download_game_dataset,
         load_data_to_raw_stg, create_stg_clean, load_into_clean_stg,
         create_other_stg_tables, load_into_other_stg_tables,
+        # Data warehouse layer
         drop_dim_tables, drop_bridge_tables,
         create_dim_tables, create_fact_game_table,
         create_bridge_tables,
