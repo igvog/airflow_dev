@@ -1,6 +1,4 @@
 ---
-# Based on the official Airflow Docker Compose file
-# https://airflow.apache.org/docs/apache-airflow/stable/docker-compose.yaml
 version: '3.8'
 
 x-airflow-common: &airflow-common
@@ -13,7 +11,7 @@ x-airflow-common: &airflow-common
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/requirements.txt
   networks:
-    - airflow_network # All services on this network
+    - airflow_network
   depends_on:
     - postgres-airflow-db
   entrypoint: /bin/bash
@@ -28,7 +26,7 @@ x-airflow-common: &airflow-common
 services:
   # Database for Airflow Metadata
   postgres-airflow-db:
-    image: postgres:13
+    image: postgres:16
     container_name: postgres-airflow-db
     environment:
       - POSTGRES_USER=airflow
@@ -36,6 +34,7 @@ services:
       - POSTGRES_DB=airflow
     volumes:
       - airflow-db-data:/var/lib/postgresql/data
+      # - /mnt/damir/.kaggle:/root/.kaggle:ro
     networks:
       - airflow_network
     healthcheck:
@@ -44,34 +43,12 @@ services:
       timeout: 5s
       retries: 5
 
-  # ----- ETL TARGET DATABASE -----
-  # This is the separate Postgres DB for our ETL pipeline
-  postgres-etl-target:
-    image: postgres:13
-    container_name: postgres-etl-target
-    ports:
-      - "5433:5432" # Expose on host port 5433 to avoid conflict
-    environment:
-      - POSTGRES_USER=etl_user
-      - POSTGRES_PASSWORD=etl_pass
-      - POSTGRES_DB=etl_db
-    volumes:
-      - etl-db-data:/var/lib/postgresql/data
-    networks:
-      - airflow_network
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "etl_user"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # Airflow Webserver and Scheduler (running in one container for simplicity)
-  # For production, you'd split webserver and scheduler into separate services
+  # Airflow Webserver and Scheduler
   airflow-services:
     <<: *airflow-common
     container_name: airflow_services
     ports:
-      - "8080:8080"
+      - "8081:8080"  # Expose Airflow on host port 8081
     healthcheck:
       test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-webserver.pid ]"]
       interval: 10s
@@ -80,7 +57,6 @@ services:
 
 volumes:
   airflow-db-data:
-  etl-db-data:
 
 networks:
   airflow_network:

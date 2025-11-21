@@ -1,17 +1,20 @@
 """
 ETL DAG: API to Data Warehouse Star Schema
-This DAG extracts data from JSONPlaceholder API, loads it into Postgres,
+This DAG extracts data from FastAPI, loads it into Postgres,
 and transforms it into a star schema data warehouse model.
 """
 
 from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.providers.postgres.operators.postgres import PostgresOperator
-from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.operators.python import PythonOperator
-import requests
+from airflow import DAG #type: ignore
+from airflow.providers.postgres.operators.postgres import PostgresOperator #type: ignore
+from airflow.providers.postgres.hooks.postgres import PostgresHook #type: ignore
+from airflow.operators.python import PythonOperator #type: ignore
+import requests #type: ignore
 import json
 import logging
+
+# Custom Plugin to TypeDict Validate json
+from typeddicts import Customer, Order, Seller, OrderItem  #type: ignore
 
 # Default arguments
 default_args = {
@@ -38,48 +41,67 @@ with DAG(
     
     def create_staging_tables(**context):
         """Create staging tables for raw API data"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        hook = PostgresHook(postgres_conn_id='pg_conn')
         
         # Drop existing staging tables
         drop_staging = """
-        DROP TABLE IF EXISTS staging_posts CASCADE;
-        DROP TABLE IF EXISTS staging_users CASCADE;
-        DROP TABLE IF EXISTS staging_comments CASCADE;
+        DROP TABLE IF EXISTS stg_order_items CASCADE;
+        DROP TABLE IF EXISTS stg_orders CASCADE;
+        DROP TABLE IF EXISTS stg_customers CASCADE;
+        DROP TABLE IF EXISTS stg_sellers CASCADE;
         """
         
         # Create staging tables
         create_staging = """
-        CREATE TABLE IF NOT EXISTS staging_posts (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER,
-            title TEXT,
-            body TEXT,
+        -- Staging table for order items
+        CREATE TABLE stg_order_items (
+            order_id TEXT,
+            order_item_id TEXT,
+            product_id TEXT,
+            seller_id TEXT,
+            shipping_limit_date TEXT,
+            price TEXT,
+            freight_value TEXT,
+            raw_data JSONB,
+            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(order_id, order_item_id)
+        );
+        
+        -- Staging table for sellers
+        CREATE TABLE stg_sellers (
+            seller_id TEXT PRIMARY KEY,
+            seller_zip_code_prefix TEXT,
+            seller_city TEXT,
+            seller_state TEXT,
             raw_data JSONB,
             loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         
-        CREATE TABLE IF NOT EXISTS staging_users (
-            id INTEGER PRIMARY KEY,
-            name TEXT,
-            username TEXT,
-            email TEXT,
-            phone TEXT,
-            website TEXT,
-            address JSONB,
-            company JSONB,
+        -- Staging table for customers
+        CREATE TABLE stg_customers (
+            customer_id TEXT PRIMARY KEY,
+            customer_unique_id TEXT,
+            customer_zip_code_prefix TEXT,
+            customer_city TEXT,
+            customer_state TEXT,
             raw_data JSONB,
             loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
-        CREATE TABLE IF NOT EXISTS staging_comments (
-            id INTEGER PRIMARY KEY,
-            post_id INTEGER,
-            name TEXT,
-            email TEXT,
-            body TEXT,
+
+        -- Staging table for orders
+        CREATE TABLE stg_orders (
+            order_id TEXT PRIMARY KEY,
+            customer_id TEXT,
+            order_status TEXT,
+            order_purchase_timestamp TEXT,
+            order_approved_at TEXT,
+            order_delivered_carrier_date TEXT,
+            order_delivered_customer_date TEXT,
+            order_estimated_delivery_date TEXT,
             raw_data JSONB,
             loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
         """
         
         hook.run(drop_staging)
@@ -91,38 +113,117 @@ with DAG(
         python_callable=create_staging_tables,
     )
     
+    # ==== Last offset Implementation ====
+    def create_last_offset(**context):
+        """Create table to keep last offset"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
+        url = """
+                CREATE TABLE IF NOT EXISTS etl_metadata (
+                    table_name TEXT PRIMARY KEY,
+                    last_offset INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+        hook.run(url)
+        logging.info("etl_metadata table created!")
+
+    def get_last_offset(**context):
+        """Read the last processed offset from metadata table"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
+        ti = context['ti']
+        tables = ['order_items', 'orders', 'customers', 'sellers']
+        offsets = {}
+        for table in tables:
+            record = hook.get_records("SELECT last_offset FROM etl_metadata WHERE table_name = %s", parameters=(table,))
+            if not record:
+                logging.info(f"No last offset detected. Passing by 0 for {table}")
+            offsets[table] = record[0][0] or 0
+        ti.xcom_push(key='offsets', value=offsets)
+
+
+    def update_last_offset(**context):
+        """
+        Update last processed offsets using counts returned by fetch_api_data.
+        """
+        hook = PostgresHook(postgres_conn_id='pg_conn')
+        ti = context['ti']
+
+        # Pull counts returned by fetch_api_data
+        counts = ti.xcom_pull(task_ids='fetch_api_data')
+        if not counts:
+            logging.warning("No counts found from fetch_api_data, skipping offset update.")
+            return
+
+        for table_map, count in [
+            ('order_items', counts.get('order_items_count', 0)),
+            ('orders', counts.get('orders_count', 0)),
+            ('customers', counts.get('customers_count', 0)),
+            ('sellers', counts.get('sellers_count', 0))
+        ]:
+            # Get previous offset
+            record = hook.get_first("SELECT last_offset FROM etl_metadata WHERE table_name = %s", parameters=(table_map,))
+            last_offset = record[0] if record else 0
+            new_offset = last_offset + count
+
+            # Update metadata table
+            sql = """
+                INSERT INTO etl_metadata (table_name, last_offset, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (table_name) DO UPDATE
+                SET last_offset = EXCLUDED.last_offset,
+                    updated_at = CURRENT_TIMESTAMP;
+            """
+            hook.run(sql, parameters=(table_map, new_offset))
+            logging.info(f"Updated last_offset for {table_map} to {new_offset}")
+
+    
+    # ====================
+    
     def fetch_api_data(**context):
         """Fetch data from JSONPlaceholder API"""
-        base_url = "https://jsonplaceholder.typicode.com"
-        
+        base_url = "http://fastapi_app:8000"
+        ti = context['ti']
+
+        #TODO: implement offset and limit def: 100 100
+        limit = 100
+        offset_ = context['ti'].xcom_pull(key='', task_ids="get_last_offset")
+
         try:
-            # Fetch posts
-            posts_response = requests.get(f"{base_url}/posts")
-            posts_response.raise_for_status()
-            posts_data = posts_response.json()
-            logging.info(f"Fetched {len(posts_data)} posts from API")
-            
-            # Fetch users
-            users_response = requests.get(f"{base_url}/users")
-            users_response.raise_for_status()
-            users_data = users_response.json()
-            logging.info(f"Fetched {len(users_data)} users from API")
-            
-            # Fetch comments
-            comments_response = requests.get(f"{base_url}/comments")
-            comments_response.raise_for_status()
-            comments_data = comments_response.json()
-            logging.info(f"Fetched {len(comments_data)} comments from API")
-            
+            # Fetch order_items
+            order_items = requests.get(f"{base_url}/order_items")
+            order_items.raise_for_status()
+            order_items_data:list[OrderItem] = order_items.json()
+            logging.info(f"Fetched {len(order_items_data)} posts from API")
+
+            # Fetch orders
+            orders_response = requests.get(f"{base_url}/orders")
+            orders_response.raise_for_status()
+            orders_data:list[Order] = orders_response.json()
+            logging.info(f"Fetched {len(orders_data)} orders from API")
+
+            # Fetch customers
+            customers_response = requests.get(f"{base_url}/customers")
+            customers_response.raise_for_status()
+            customers_data:list[Customer] = customers_response.json()
+            logging.info(f"Fetched {len(customers_data)} customers from API")
+
+            # Fetch sellers
+            sellers_response = requests.get(f"{base_url}/sellers")
+            sellers_response.raise_for_status()
+            sellers_data:list[Seller] = sellers_response.json()
+            logging.info(f"Fetched {len(sellers_data)} sellers from API")
+
             # Store in XCom for next tasks
-            context['ti'].xcom_push(key='posts_data', value=posts_data)
-            context['ti'].xcom_push(key='users_data', value=users_data)
-            context['ti'].xcom_push(key='comments_data', value=comments_data)
+            context['ti'].xcom_push(key='order_items_data', value=order_items_data)
+            context['ti'].xcom_push(key='orders_data', value=orders_data)
+            context['ti'].xcom_push(key='customers_data', value=customers_data)
+            context['ti'].xcom_push(key='sellers_data', value=sellers_data)
             
             return {
-                'posts_count': len(posts_data),
-                'users_count': len(users_data),
-                'comments_count': len(comments_data)
+                'order_items_count': len(order_items_data),
+                'orders_count': len(orders_data),
+                'customers_count': len(customers_data),
+                'sellers_count': len(sellers_data)
             }
         except Exception as e:
             logging.error(f"Error fetching API data: {str(e)}")
@@ -133,302 +234,389 @@ with DAG(
         python_callable=fetch_api_data,
     )
     
-    def load_posts_to_staging(**context):
-        """Load posts data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        posts_data = context['ti'].xcom_pull(key='posts_data', task_ids='fetch_api_data')
+    def load_order_items_to_staging(**context):
+        """Load order_items data into staging table"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
+        order_items_data = context['ti'].xcom_pull(key='order_items_data', task_ids='fetch_api_data')
         
-        for post in posts_data:
+        for item in order_items_data:
             insert_query = """
-            INSERT INTO staging_posts (id, user_id, title, body, raw_data)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                title = EXCLUDED.title,
-                body = EXCLUDED.body,
+            INSERT INTO stg_order_items (
+                order_id,
+                order_item_id,
+                product_id,
+                seller_id,
+                shipping_limit_date,
+                price,
+                freight_value,
+                raw_data
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (order_id, order_item_id) DO UPDATE SET
+                product_id = EXCLUDED.product_id,
+                seller_id = EXCLUDED.seller_id,
+                shipping_limit_date = EXCLUDED.shipping_limit_date,
+                price = EXCLUDED.price,
+                freight_value = EXCLUDED.freight_value,
                 raw_data = EXCLUDED.raw_data,
                 loaded_at = CURRENT_TIMESTAMP;
             """
             hook.run(
                 insert_query,
                 parameters=(
-                    post['id'],
-                    post['userId'],
-                    post['title'],
-                    post['body'],
-                    json.dumps(post)
+                    item['order_id'],
+                    item['order_item_id'],
+                    item['product_id'],
+                    item['seller_id'],
+                    item['shipping_limit_date'],
+                    item['price'],
+                    item['freight_value'],
+                    json.dumps(item)
                 )
             )
-        
-        logging.info(f"Loaded {len(posts_data)} posts into staging_posts")
     
-    load_posts = PythonOperator(
-        task_id='load_posts_to_staging',
-        python_callable=load_posts_to_staging,
+        logging.info(f"Loaded {len(order_items_data)} items into stg_order_items")
+    
+    load_order_items = PythonOperator(
+        task_id='load_order_items_to_staging',
+        python_callable=load_order_items_to_staging,
+    )
+
+    
+    def load_orders_to_staging(**context):
+        """Loads orders into staging table"""
+        hook = PostgresHook(postgres_conn_id="pg_conn")
+        orders:list[Order] = context['ti'].xcom_pull(key='orders_data', task_ids="fetch_api_data")
+        
+        for order in orders:
+            insert_query="""
+                INSERT INTO stg_orders(
+                    order_id, 
+                    customer_id, 
+                    order_status, 
+                    order_purchase_timestamp, 
+                    order_approved_at, 
+                    order_delivered_carrier_date, 
+                    order_delivered_customer_date, 
+                    order_estimated_delivery_date, 
+                    raw_data
+                    )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (order_id) DO UPDATE SET
+                    customer_id = EXCLUDED.customer_id,
+                    order_status = EXCLUDED.order_status,
+                    order_purchase_timestamp = EXCLUDED.order_purchase_timestamp,
+                    order_approved_at = EXCLUDED.order_approved_at,
+                    order_delivered_carrier_date = EXCLUDED.order_delivered_carrier_date,
+                    order_delivered_customer_date = EXCLUDED.order_delivered_customer_date,
+                    order_estimated_delivery_date = EXCLUDED.order_estimated_delivery_date,
+                    raw_data = EXCLUDED.raw_data,
+                    loaded_at = CURRENT_TIMESTAMP;
+                """
+            hook.run(insert_query,
+                     parameters=(
+                         order['order_id'],
+                         order['customer_id'],
+                         order['order_approved_at'],
+                         order['order_purchase_timestamp'],
+                         order['order_approved_at'],
+                         order['order_delivered_carrier_date'],
+                         order['order_delivered_customer_date'],
+                         order['order_estimated_delivery_date'],
+                         json.dumps(order)
+                         ))
+            
+        logging.info(f"Loaded {len(orders)} order into staging_orders")
+
+    load_orders = PythonOperator(
+        task_id='load_orders_to_staging',
+        python_callable=load_orders_to_staging,
     )
     
-    def load_users_to_staging(**context):
-        """Load users data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        users_data = context['ti'].xcom_pull(key='users_data', task_ids='fetch_api_data')
-        
-        for user in users_data:
+    def load_customers_to_staging(**context):
+        """Load customers data into staging table"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
+        customers_data = context['ti'].xcom_pull(key='customers_data', task_ids='fetch_api_data')
+
+        for customer in customers_data:
             insert_query = """
-            INSERT INTO staging_users (id, name, username, email, phone, website, address, company, raw_data)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                username = EXCLUDED.username,
-                email = EXCLUDED.email,
-                phone = EXCLUDED.phone,
-                website = EXCLUDED.website,
-                address = EXCLUDED.address,
-                company = EXCLUDED.company,
+            INSERT INTO stg_customers (
+                customer_id,
+                customer_unique_id,
+                customer_zip_code_prefix,
+                customer_city,
+                customer_state,
+                raw_data
+            )
+            VALUES (%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (customer_id) DO UPDATE SET
+                customer_unique_id = EXCLUDED.customer_unique_id,
+                customer_zip_code_prefix = EXCLUDED.customer_zip_code_prefix,
+                customer_city = EXCLUDED.customer_city,
+                customer_state = EXCLUDED.customer_state,
                 raw_data = EXCLUDED.raw_data,
                 loaded_at = CURRENT_TIMESTAMP;
             """
             hook.run(
                 insert_query,
                 parameters=(
-                    user['id'],
-                    user['name'],
-                    user['username'],
-                    user['email'],
-                    user.get('phone', ''),
-                    user.get('website', ''),
-                    json.dumps(user.get('address', {})),
-                    json.dumps(user.get('company', {})),
-                    json.dumps(user)
+                    customer['customer_id'],
+                    customer['customer_unique_id'],
+                    customer['customer_zip_code_prefix'],
+                    customer['customer_city'],
+                    customer['customer_state'],
+                    json.dumps(customer)
                 )
             )
-        
-        logging.info(f"Loaded {len(users_data)} users into staging_users")
-    
-    load_users = PythonOperator(
-        task_id='load_users_to_staging',
-        python_callable=load_users_to_staging,
+        logging.info(f"Loaded {len(customers_data)} customers into stg_customers")
+
+    load_customers = PythonOperator(
+        task_id="load_customers",
+        python_callable=load_customers_to_staging,
     )
     
-    def load_comments_to_staging(**context):
-        """Load comments data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        comments_data = context['ti'].xcom_pull(key='comments_data', task_ids='fetch_api_data')
-        
-        for comment in comments_data:
+    def load_sellers_to_staging(**context):
+        """Load sellers data into staging table"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
+        sellers_data = context['ti'].xcom_pull(key='sellers_data', task_ids='fetch_api_data')
+
+        for seller in sellers_data:
             insert_query = """
-            INSERT INTO staging_comments (id, post_id, name, email, body, raw_data)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                post_id = EXCLUDED.post_id,
-                name = EXCLUDED.name,
-                email = EXCLUDED.email,
-                body = EXCLUDED.body,
+            INSERT INTO stg_sellers (
+                seller_id,
+                seller_zip_code_prefix,
+                seller_city,
+                seller_state,
+                raw_data
+            )
+            VALUES (%s,%s,%s,%s,%s)
+            ON CONFLICT (seller_id) DO UPDATE SET
+                seller_zip_code_prefix = EXCLUDED.seller_zip_code_prefix,
+                seller_city = EXCLUDED.seller_city,
+                seller_state = EXCLUDED.seller_state,
                 raw_data = EXCLUDED.raw_data,
                 loaded_at = CURRENT_TIMESTAMP;
             """
             hook.run(
                 insert_query,
                 parameters=(
-                    comment['id'],
-                    comment['postId'],
-                    comment['name'],
-                    comment['email'],
-                    comment['body'],
-                    json.dumps(comment)
+                    seller['seller_id'],
+                    seller['seller_zip_code_prefix'],
+                    seller['seller_city'],
+                    seller['seller_state'],
+                    json.dumps(seller)
                 )
             )
-        
-        logging.info(f"Loaded {len(comments_data)} comments into staging_comments")
+        logging.info(f"Loaded {len(sellers_data)} sellers into stg_sellers")
     
-    load_comments = PythonOperator(
-        task_id='load_comments_to_staging',
-        python_callable=load_comments_to_staging,
+    load_sellers = PythonOperator(
+        task_id='load_sellers_to_staging',
+        python_callable=load_sellers_to_staging,
     )
-    
+
     # ========== DATA WAREHOUSE LAYER (STAR SCHEMA) ==========
     
     create_dw_schema = PostgresOperator(
         task_id='create_dw_schema',
-        postgres_conn_id='postgres_etl_target_conn',
+        postgres_conn_id='pg_conn',
         sql="""
         -- Drop existing DW tables
-        DROP TABLE IF EXISTS fact_posts CASCADE;
-        DROP TABLE IF EXISTS dim_users CASCADE;
-        DROP TABLE IF EXISTS dim_dates CASCADE;
+        DROP TABLE IF EXISTS fact_order_items CASCADE;
+        DROP TABLE IF EXISTS dim_orders CASCADE;
+        DROP TABLE IF EXISTS dim_customers CASCADE;
+        DROP TABLE IF EXISTS dim_sellers CASCADE;
         
-        -- Dimension: Users
-        CREATE TABLE dim_users (
-            user_key SERIAL PRIMARY KEY,
-            user_id INTEGER UNIQUE NOT NULL,
-            username VARCHAR(100),
-            name VARCHAR(200),
-            email VARCHAR(200),
-            phone VARCHAR(50),
-            website VARCHAR(200),
-            city VARCHAR(100),
-            company_name VARCHAR(200),
-            valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            valid_to TIMESTAMP,
-            is_current BOOLEAN DEFAULT TRUE
+        -- Dimension: Customers
+        CREATE TABLE dim_customers (
+            customer_id TEXT PRIMARY KEY,
+            unique_id TEXT,
+            zip_code_prefix TEXT,
+            city TEXT,
+            state TEXT
+        );
+        -- Dimension: Sellers
+        CREATE TABLE dim_sellers (
+            seller_id TEXT PRIMARY KEY,
+            zip_code_prefix TEXT,
+            city TEXT,
+            state TEXT
+        );
+        -- Dimernsion: orders
+        CREATE TABLE dim_orders (
+            order_id TEXT PRIMARY KEY,
+            customer_id TEXT, -- REFERENCES dim_customers(customer_id),
+            order_status TEXT,
+            order_purchase_timestamp TIMESTAMP,
+            order_approved_at TIMESTAMP,
+            order_delivered_carrier_date TIMESTAMP,
+            order_delivered_customer_date TIMESTAMP,
+            order_estimated_delivery_date TIMESTAMP
+        );
+
+        -- Fact: order items (with metrics)
+        CREATE TABLE fact_order_items (
+            order_id TEXT, -- REFERENCES dim_orders(order_id),
+            order_item_id TEXT,
+            product_id TEXT,
+            seller_id TEXT, -- REFERENCES dim_sellers(seller_id),
+            shipping_limit_date TIMESTAMP,
+            price NUMERIC(10,2),
+            freight_value NUMERIC(10,2),
+            total_value NUMERIC(10,2), -- we calculate this
+            PRIMARY KEY (order_id, order_item_id)
         );
         
-        -- Dimension: Dates (for time-based analysis)
-        CREATE TABLE dim_dates (
-            date_key INTEGER PRIMARY KEY,
-            full_date DATE NOT NULL,
-            year INTEGER,
-            quarter INTEGER,
-            month INTEGER,
-            month_name VARCHAR(20),
-            day INTEGER,
-            day_of_week INTEGER,
-            day_name VARCHAR(20),
-            is_weekend BOOLEAN
-        );
-        
-        -- Fact: Posts (with metrics)
-        CREATE TABLE fact_posts (
-            post_key SERIAL PRIMARY KEY,
-            post_id INTEGER NOT NULL,
-            user_key INTEGER REFERENCES dim_users(user_key),
-            date_key INTEGER REFERENCES dim_dates(date_key),
-            title TEXT,
-            body TEXT,
-            body_length INTEGER,
-            word_count INTEGER,
-            comment_count INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        
-        -- Create indexes for better query performance
-        CREATE INDEX idx_fact_posts_user_key ON fact_posts(user_key);
-        CREATE INDEX idx_fact_posts_date_key ON fact_posts(date_key);
-        CREATE INDEX idx_fact_posts_post_id ON fact_posts(post_id);
         """,
     )
     
-    def populate_dim_users(**context):
-        """Populate user dimension table from staging"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+    def populate_dim_customers(**context):
+        """Populate customer dimension table from staging"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
         
         sql = """
-        INSERT INTO dim_users (user_id, username, name, email, phone, website, city, company_name)
+        INSERT INTO dim_customers (customer_id, unique_id, zip_code_prefix, city, state)
         SELECT DISTINCT
-            id as user_id,
-            username,
-            name,
-            email,
-            phone,
-            website,
-            address->>'city' as city,
-            company->>'name' as company_name
-        FROM staging_users
-        ON CONFLICT (user_id) DO UPDATE SET
-            username = EXCLUDED.username,
-            name = EXCLUDED.name,
-            email = EXCLUDED.email,
-            phone = EXCLUDED.phone,
-            website = EXCLUDED.website,
+            customer_id,
+            customer_unique_id, 
+            customer_zip_code_prefix,
+            customer_city,
+            customer_state
+        FROM stg_customers
+        ON CONFLICT (customer_id) 
+        DO UPDATE SET
+            unique_id = EXCLUDED.unique_id,
+            zip_code_prefix = EXCLUDED.zip_code_prefix,
             city = EXCLUDED.city,
-            company_name = EXCLUDED.company_name,
-            updated_at = CURRENT_TIMESTAMP;
+            state = EXCLUDED.state;
         """
         
         hook.run(sql)
         logging.info("Populated dim_users dimension table")
     
-    populate_dim_users_task = PythonOperator(
-        task_id='populate_dim_users',
-        python_callable=populate_dim_users,
+    populate_dim_customers_task = PythonOperator(
+        task_id='populate_dim_customers',
+        python_callable=populate_dim_customers,
     )
     
-    def populate_dim_dates(**context):
-        """Populate date dimension table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+    def populate_dim_sellers(**context):
+        """Populate sellers dimension table"""
+        hook = PostgresHook(postgres_conn_id='pg_conn')
         
         # Generate dates for the next 5 years
         sql = """
-        INSERT INTO dim_dates (date_key, full_date, year, quarter, month, month_name, day, day_of_week, day_name, is_weekend)
-        SELECT
-            TO_CHAR(d, 'YYYYMMDD')::INTEGER as date_key,
-            d::DATE as full_date,
-            EXTRACT(YEAR FROM d)::INTEGER as year,
-            EXTRACT(QUARTER FROM d)::INTEGER as quarter,
-            EXTRACT(MONTH FROM d)::INTEGER as month,
-            TO_CHAR(d, 'Month') as month_name,
-            EXTRACT(DAY FROM d)::INTEGER as day,
-            EXTRACT(DOW FROM d)::INTEGER as day_of_week,
-            TO_CHAR(d, 'Day') as day_name,
-            CASE WHEN EXTRACT(DOW FROM d) IN (0, 6) THEN TRUE ELSE FALSE END as is_weekend
-        FROM generate_series(
-            '2020-01-01'::DATE,
-            '2025-12-31'::DATE,
-            '1 day'::INTERVAL
-        ) d
-        ON CONFLICT (date_key) DO NOTHING;
+        INSERT INTO dim_sellers (
+            seller_id, zip_code_prefix, city, state
+        )
+        SELECT DISTINCT
+            seller_id,
+            seller_zip_code_prefix,
+            seller_city,
+            seller_state
+        FROM stg_sellers
+        ON CONFLICT (seller_id) DO UPDATE SET
+            zip_code_prefix = EXCLUDED.zip_code_prefix,
+            city = EXCLUDED.city,
+            state = EXCLUDED.state;
         """
         
         hook.run(sql)
-        logging.info("Populated dim_dates dimension table")
+        logging.info("Populated dim_sellers dimension table")
     
-    populate_dim_dates_task = PythonOperator(
-        task_id='populate_dim_dates',
-        python_callable=populate_dim_dates,
+    populate_dim_sellers_task = PythonOperator(
+        task_id='populate_dim_sellers',
+        python_callable=populate_dim_sellers,
     )
-    
-    def populate_fact_posts(**context):
+
+    def populate_dim_orders(**context):
+        hook = PostgresHook(postgres_conn_id="pg_conn")
+
+        sql = """
+            INSERT INTO dim_orders (
+                order_id, 
+                customer_id, 
+                order_status,
+                order_purchase_timestamp, 
+                order_approved_at,
+                order_delivered_carrier_date, 
+                order_delivered_customer_date,
+                order_estimated_delivery_date
+            )
+            SELECT DISTINCT
+                order_id,
+                customer_id,
+                order_status,
+                order_purchase_timestamp::timestamp,
+                order_approved_at::timestamp,
+                order_delivered_carrier_date::timestamp, 
+                order_delivered_customer_date::timestamp,
+                order_estimated_delivery_date::timestamp
+            FROM stg_orders
+            ON CONFLICT (order_id) DO UPDATE SET
+                customer_id = EXCLUDED.customer_id,
+                order_status = EXCLUDED.order_status,
+                order_purchase_timestamp = EXCLUDED.order_purchase_timestamp,
+                order_approved_at = EXCLUDED.order_approved_at,
+                order_delivered_carrier_date = EXCLUDED.order_delivered_carrier_date,
+                order_delivered_customer_date = EXCLUDED.order_delivered_customer_date,
+                order_estimated_delivery_date = EXCLUDED.order_estimated_delivery_date;
+            """
+        
+        hook.run(sql)
+        logging.info("Populated dim_orders dimension table")
+
+    populate_dim_orders_task = PythonOperator(
+        task_id='populate_dim_orders',
+        python_callable=populate_dim_orders,
+    )
+
+    def populate_fact_order_items(**context):
         """Populate fact table with posts data"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        hook = PostgresHook(postgres_conn_id='pg_conn')
         
         sql = """
-        INSERT INTO fact_posts (
-            post_id, user_key, date_key, title, body, 
-            body_length, word_count, comment_count
-        )
-        SELECT
-            sp.id as post_id,
-            du.user_key,
-            TO_CHAR(sp.loaded_at, 'YYYYMMDD')::INTEGER as date_key,
-            sp.title,
-            sp.body,
-            LENGTH(sp.body) as body_length,
-            array_length(string_to_array(sp.body, ' '), 1) as word_count,
-            COALESCE(comment_counts.comment_count, 0) as comment_count
-        FROM staging_posts sp
-        INNER JOIN dim_users du ON sp.user_id = du.user_id
-        LEFT JOIN (
-            SELECT post_id, COUNT(*) as comment_count
-            FROM staging_comments
-            GROUP BY post_id
-        ) comment_counts ON sp.id = comment_counts.post_id
-        ON CONFLICT (post_id) DO UPDATE SET
-            user_key = EXCLUDED.user_key,
-            date_key = EXCLUDED.date_key,
-            title = EXCLUDED.title,
-            body = EXCLUDED.body,
-            body_length = EXCLUDED.body_length,
-            word_count = EXCLUDED.word_count,
-            comment_count = EXCLUDED.comment_count,
-            updated_at = CURRENT_TIMESTAMP;
+            INSERT INTO fact_order_items (
+                order_id,
+                order_item_id, 
+                product_id,
+                seller_id,
+                shipping_limit_date,
+                price,
+                freight_value, 
+                total_value
+            )
+            SELECT DISTINCT
+                order_id,
+                order_item_id,
+                product_id, 
+                seller_id,
+                shipping_limit_date :: timestamp,
+                price::numeric,
+                freight_value::numeric,
+                (price::numeric + freight_value::numeric) AS total_value
+            FROM stg_order_items
+            ON CONFLICT (order_id, order_item_id) DO UPDATE SET
+                product_id = EXCLUDED.product_id,
+                seller_id = EXCLUDED.seller_id,
+                shipping_limit_date = EXCLUDED.shipping_limit_date,
+                price = EXCLUDED.price,
+                freight_value = EXCLUDED.freight_value,
+                total_value = EXCLUDED.total_value;
         """
         
         hook.run(sql)
-        logging.info("Populated fact_posts fact table")
+        logging.info("Populated fact_order_items fact table")
     
-    populate_fact_posts_task = PythonOperator(
-        task_id='populate_fact_posts',
-        python_callable=populate_fact_posts,
+    populate_fact_order_items_task = PythonOperator(
+        task_id='populate_fact_order_items',
+        python_callable=populate_fact_order_items,
     )
     
     # ========== TASK DEPENDENCIES ==========
     
     # Staging layer
     create_staging >> fetch_data
-    fetch_data >> [load_posts, load_users, load_comments]
+    fetch_data >> [load_sellers, load_customers, load_orders, load_order_items] >> create_dw_schema
     
     # Data warehouse layer
-    [load_posts, load_users, load_comments] >> create_dw_schema
-    create_dw_schema >> [populate_dim_users_task, populate_dim_dates_task]
-    [populate_dim_users_task, populate_dim_dates_task] >> populate_fact_posts_task
+    create_dw_schema >> [populate_dim_customers_task, populate_dim_orders_task, populate_dim_sellers_task] >> populate_fact_order_items_task
 
