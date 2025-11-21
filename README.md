@@ -32,12 +32,12 @@ Ensure your files are arranged as follows:
 
 Create a .env file with the following:
 
-ID=<your_airflow_id>
-AIRFLOW**SMTP**SMTP_PASSWORD=<your_email_password>
+**ID=<your_airflow_id>**
+**AIRFLOW\_\_SMTP\_\_SMTP_PASSWORD=<your_email_password>**
 
 In your docker-compose.yaml for Airflow, set:
 
-AIRFLOW**SMTP**SMTP_USER: <your_email>
+**AIRFLOW\_\_SMTP\_\_SMTP_USER: <your_email>**
 
 ## Step 2: Start the Environment
 
