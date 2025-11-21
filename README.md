@@ -1,22 +1,22 @@
-# Airflow ETL Demo Setup
+ETL-проект для датасета Olist (Airflow + PostgreSQL)
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+Этот проект реализует полный ETL-процесс для e-commerce датасета Olist с использованием Apache Airflow и PostgreSQL.
+Пайплайн автоматически загружает сырые CSV-файлы, преобразует их в измерения и факты, а затем записывает в DWH.
 
-## Project Structure
+Проект выполнен как учебная работа для понимания построения дата-пайплайнов и DWH-моделирования.
 
-Ensure your files are arranged as follows:
-
-```
-.
+⸻
+airflow-docker/
+│
 ├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
+│   ├── etl_olist_ecommerce.py       # главный DAG проекта
+│   ├── sql/
+│   │   └── create_olist_dwh.sql     # DWH схема (таблицы Dim/Fact)
+│   └── data/                        # исходные CSV Olist
+│
+├── docker-compose.yaml               # запуск Airflow
+├── .gitignore
 └── README.md
-```
 
 ## Step 1: Update .env File
 
