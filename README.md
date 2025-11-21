@@ -302,15 +302,15 @@ SELECT COUNT(*) FROM stg_geolocation;
 SELECT COUNT(*) FROM dim_customer;
 SELECT COUNT(*) FROM dim_geolocation;
 SELECT COUNT(*) FROM dim_payment_type;
-SELECT COUNT(*) FROM dim_date;```
+SELECT COUNT(*) FROM dim_date;
 Проверка fact:
-```sql
+
 Копировать код
 SELECT COUNT(*) FROM fact_order_items;
 SELECT COUNT(*) FROM fact_order_payments;
-SELECT COUNT(*) FROM fact_order_reviews;```
+SELECT COUNT(*) FROM fact_order_reviews;
 Пример аналитического запроса:
-```sql
+
 Копировать код
 SELECT 
     d.year,
