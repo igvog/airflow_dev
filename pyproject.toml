@@ -1,0 +1,12 @@
+[project]
+name = "airflow-dev"
+version = "0.1.0"
+description = "Capstone final project: Airflow + Olist data source + DWH"
+requires-python = ">=3.10"
+
+dependencies = [
+    "apache-airflow",
+    "apache-airflow-providers-postgres",
+]
+
+[tool.uv]
