@@ -15,7 +15,6 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.providers.postgres.operators.postgres import PostgresOperator
-from airflow.operators.email import EmailOperator
 from airflow.models import Variable
 from airflow.providers.http.operators.http import SimpleHttpOperator
 
@@ -35,15 +34,10 @@ PAYMENTS_FILE = "olist_order_payments_dataset.csv"
 # Импортим батчами
 BATCH_SIZE = 5000
 
-ALERT_EMAIL = Variable.get("ALERT_EMAIL", default_var=None)
-
 # Дефолтные аргументы
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'email_on_failure': True,
-    'email_on_retry': False,
-    'email': [ALERT_EMAIL] if ALERT_EMAIL else [],
     'retries': 1,
     'retry_delay': timedelta(minutes=2),
 }
@@ -845,18 +839,6 @@ with DAG(
         python_callable=populate_fact_orders,
     )
 
-    alert_email = EmailOperator(
-        task_id="alert_email_on_failure",
-        to=Variable.get("ALERT_EMAIL"),
-        subject="DAG {{ dag.dag_id }} failed on {{ ds }}",
-        html_content="""
-        DAG {{ dag.dag_id }} failed.<br/>
-        Run id: {{ run_id }}<br/>
-        Execution date: {{ ds }}<br/>
-        """,
-        trigger_rule="one_failed",  # запустится, если хоть один upstream упал
-    )
-
     alert_telegram = SimpleHttpOperator(
         task_id="alert_telegram_on_failure",
         http_conn_id="telegram_api",  # Connection с base_url = https://api.telegram.org
@@ -910,5 +892,4 @@ with DAG(
         populate_fact_orders_task,
     ]
 
-    all_main_tasks >> alert_email
     all_main_tasks >> alert_telegram
