@@ -1,7 +1,7 @@
 ---
 # Based on the official Airflow Docker Compose file
 # https://airflow.apache.org/docs/apache-airflow/stable/docker-compose.yaml
-version: '3.8'
+# version: '3.8'
 
 x-airflow-common: &airflow-common
   image: apache/airflow:2.9.2-python3.12

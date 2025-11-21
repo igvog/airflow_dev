@@ -1,23 +1,6 @@
-# Airflow ETL Demo Setup
+# Airflow ETL Shugyla Assan
 
 This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
-
-## Project Structure
-
-Ensure your files are arranged as follows:
-
-```
-.
-├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
-```
-
 ## Step 1: Update .env File
 
 Before you start, find your local user ID by running this in your terminal:
@@ -78,7 +61,7 @@ This is the most important step for the ETL to work. You need to tell Airflow ho
 ## Step 5: Run Your ETL DAG
 
 1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
+2. Find the `movie_ratings_etl_dag` DAG
 3. Click the **Play** button (▶) on the right to trigger a manual run
 4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
 
@@ -94,13 +77,83 @@ You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to t
 - **User:** `etl_user`
 - **Password:** `etl_pass`
 
-Once connected, run this SQL query:
 
-```sql
-SELECT * FROM users;
-```
+Movie Ratings ETL Project
 
-You should see the 10 user records from the API! 🎉
+Этот проект реализует ETL-процесс для загрузки данных о фильмах и пользовательских рейтингах в Data Warehouse (Star Schema).
+
+
+## Ключевые компоненты:
+
+Staging tables- промежуточные таблицы для исходных CSV-файлов.
+Dimension tables (dim_users, dim_movies, dim_date) - справочные таблицы для аналитики.
+Fact table (fact_ratings) - таблица фактов с рейтингами пользователей.
+Airflow DAG -автоматизация загрузки, трансформации и обновления данных.
+
+## Данные
+
+Данные проекта взяты из публичного датасета на Kaggle: The Movies Dataset
+https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset/data?select=movies_metadata.csv 
+
+## Используются файлы:
+movies_metadata.csv - информация о фильмах: title, genres, release_date, budget, revenue, tagline и др.
+ratings.csv -пользовательские рейтинги: userId, movieId, rating, timestamp.
+для работы DAG файлы должны быть помещены в папку dags/files/.
+
+## Структура проекта
+│
+├── dags/
+│   ├── movie_ratings_star_schema_etl.py  
+│   └── files/
+│       ├── movies_metadata.csv
+|       |   └── movies_metadata.csv       
+│       └── ratings.csv
+│         └── ratings.csv      
+├── README.md
+└── requirements.txt 
+
+Установка и запуск
+
+Клонировать репозиторий и перейти в ветку проекта
+
+git clone <url_репозитория>
+git checkout <твоя_ветка>
+
+
+
+
+
+Настроить Airflow (step 3)
+Настройте соединение с PostgreSQL через Airflow (postgres_etl_target_conn). (step 4)
+Создайте базу данных для ETL.
+
+Запустить DAG
+
+DAG movie_ratings_star_schema_etl автоматически выполняет:
+Загрузку CSV в staging.
+Очистку и создание таблиц (staging + DW).
+Заполнение dimension tables (dim_users, dim_movies, dim_date).
+Заполнение fact table (fact_ratings).
+DAG поддерживает параметризацию даты запуска (run_date), безопасный backfill и upsert для измерений.
+
+Результат
+Полностью подготовленный Star Schema DW, готовый к аналитике и построению отчетов.
+
+## Технические особенности
+
+Chunking — загрузка больших CSV частями для экономии памяти.
+JSON parsing — обработка жанров фильмов в формате JSON.
+Try-Catch — обработка ошибок при загрузке данных с логированием.
+Parameterized DAG — можно запускать ETL для конкретной даты.
+Upsert — обновление данных измерений при повторной загрузке.
+Логирование и ошибки
+Используется Python logging для отслеживания прогресса и ошибок.
+При ошибках загрузки строки пропускаются с помощью AirflowSkipException.
+
+Ensure your files are arranged as follows:
+
+
+
 
 ## Stopping the Environment
 
@@ -116,12 +169,6 @@ To stop and remove the database volumes (deleting all your data), run:
 docker-compose down -v
 ```
 
-
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-**3. Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-**4. Technical add.work: package manager to UV or poetry, **
 
 Expected project output:
 1. Code
