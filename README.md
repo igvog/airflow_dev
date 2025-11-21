@@ -289,29 +289,31 @@ Docker использует requirements.txt, UV — альтернативны�
 После запуска DAG:
 
 Проверка staging:
-sql
 Копировать код
+```sql
 SELECT COUNT(*) FROM stg_orders;
 SELECT COUNT(*) FROM stg_order_items;
 SELECT COUNT(*) FROM stg_order_payments;
 SELECT COUNT(*) FROM stg_customers;
-SELECT COUNT(*) FROM stg_geolocation;
+SELECT COUNT(*) FROM stg_geolocation;```
 Проверка dim:
-```sql
 Копировать код
+```sql
 SELECT COUNT(*) FROM dim_customer;
 SELECT COUNT(*) FROM dim_geolocation;
 SELECT COUNT(*) FROM dim_payment_type;
-SELECT COUNT(*) FROM dim_date;
+SELECT COUNT(*) FROM dim_date;```
 Проверка fact:
 
 Копировать код
+```sql
 SELECT COUNT(*) FROM fact_order_items;
 SELECT COUNT(*) FROM fact_order_payments;
-SELECT COUNT(*) FROM fact_order_reviews;
+SELECT COUNT(*) FROM fact_order_reviews;```
 Пример аналитического запроса:
 
 Копировать код
+```sql
 SELECT 
     d.year,
     d.month,
