@@ -1,56 +1,74 @@
-# Airflow ETL > DW (star schema)
+﻿# Airflow ETL -> DW (Star Schema)
 
-Docker-compose ��������� � Airflow 2.9.2 � ����� DAG���:
-- `api_to_dw_star_schema`: JSONPlaceholder > Postgres > ������� ����� (dim_users, dim_dates, fact_posts).
-- `olist_to_dw_star_schema`: Olist CSV > Postgres > ������� ����� (dim_customers/sellers/products/dates, fact_order_items/fact_payments).
+Проект поднимает Airflow 2.9.2 (Docker) и DAGи для выгрузки данных в Postgres и построения звёздной схемы.
+- api_to_dw_star_schema: JSONPlaceholder -> Postgres -> звезда (staging -> dims/fact).
+- olist_to_dw_star_schema: Olist CSV -> Postgres -> звезда (staging -> dims/fact).
 
-## ������� �����
-����������: Docker Desktop.
+## Olist DAG (olist_to_dw_star_schema)
+- Датасет Olist лежит в data/olist (монтируется как /opt/airflow/data/olist в контейнере). Чтобы перекачать файлы, укажите refresh_data_files=true при запуске DAG.
+- Параметры: run_date (логическая дата загрузки, по умолчанию 2024-01-01), full_refresh (true по умолчанию), refresh_data_files (false по умолчанию), force_fail (тест алертов).
+- Таблицы: staging (staging_*), затем dim (dim_customers, dim_sellers, dim_products, dim_dates) и факты (fact_order_items, fact_payments) в базе postgres_etl_target.
+- Backfill: Trigger DAG с нужным run_date или airflow dags backfill; при full_refresh=true staging/dim/fact пересоздаются.
 
-1) �������� ������ ��������� � ��� ������������� �������� UID/GID (�� Linux `id -u`/`id -g`):
-```bash
-cp .env.example .env
-```
-�����������: ������� `ALERT_EMAILS`, SMTP (���� ����� ������), ���� ���� � ������ Olist ����� `OLIST_DATA_DIR` (�� ��������� `/opt/airflow/data/olist`, � ���� ������ ���).
+## Что внутри
+- dags/api_to_dw_star_schema.py — параметризованный DAG (backfill/refill, run_date, алерты, логи).
+- dags/olist_to_dw_star_schema.py — DAG для Olist CSV -> DW.
+- docker-compose.yaml + .env.example — окружение Airflow + отдельный Postgres для витрины.
+- pyproject.toml, poetry.lock — зависимости (Poetry), requirements.txt — экспорт для отладки.
+- plugins/.gitkeep — заготовка под плагины.
 
-2) ������� �������:
-```bash
-docker-compose up --build -d
-```
-Airflow UI: http://localhost:8080 (admin/admin).
-Target Postgres �������: `localhost:5433`, �� `etl_db`, user `etl_user`, pass `etl_pass`.
+## Быстрый старт
+Требования: Docker Desktop, Docker Compose.
 
-3) ������ connection `postgres_etl_target_conn` � Airflow (Admin > Connections) � �����������:
-- Host: `postgres-etl-target`
-- Port: `5432` (������ ���� Docker)
-- Database: `etl_db`
-- User/Password: `etl_user` / `etl_pass`
-���: Postgres. (���������� `AIRFLOW_CONN_POSTGRES_ETL_TARGET_CONN` � `.env` ������� ��� �������������.)
+1) Перейти в каталог:
+   cd airflow_dev
 
-4) ������ Olist: ������ CSV � `data/olist` (����������� ��� `/opt/airflow/data/olist`). ���� �����, ������� DAG � `refresh_data_files=true` � �� ������� �� ���.
+2) Создать .env:
+   cp .env.example .env
+   # На Linux/macOS: заменить AIRFLOW_UID на вывод id -u; при необходимости указать ALERT_EMAILS через запятую
 
-## ��������� DAG��
-- `api_to_dw_star_schema`:
-  - `run_date` (���������� ���� ��������, �� ��������� `data_interval_end`),
-  - `full_refresh` (����������� staging/dim/fact ��� ������).
-  Backfill: UI Trigger ��� CLI ������ ����������: `airflow dags backfill api_to_dw_star_schema -s 2024-01-01 -e 2024-01-05`.
-- `olist_to_dw_star_schema`:
-  - `run_date` (default `2024-01-01`),
-  - `full_refresh` (drop/recreate),
-  - `refresh_data_files` (���������� CSV),
-  - `force_fail` (�������� �������).
+3) Поднять окружение (Docker Desktop должен быть запущен):
+   docker-compose up --build -d
 
-## �������� ������
-���������� � `localhost:5433` (etl_db/etl_user/etl_pass) � �������, ��������:
-```sql
-SELECT COUNT(*) FROM fact_posts;
-SELECT COUNT(*) FROM fact_order_items;
-SELECT COUNT(*) FROM fact_payments;
-```
-��� ������� �� `sql/olist_reporting_queries.sql`.
+Airflow UI: http://localhost:8080 (login/password: admin / admin)
+Postgres витрины: localhost:5433, БД etl_db, пользователь etl_user, пароль etl_pass.
 
-## ���������
-```bash
-docker-compose down        # ����������
-docker-compose down -v     # ���������� � ������� volume � �������
-```
+## Параметры DAG
+- run_date — логическая дата загрузки (например, 2024-01-01). По умолчанию data_interval_end, backfill работает штатно.
+- full_refresh — true/false, пересоздавать staging и витрину перед загрузкой (по умолчанию true).
+- Подключение к БД создаётся автоматически, если в .env есть AIRFLOW_CONN_POSTGRES_ETL_TARGET_CONN=postgresql+psycopg2://etl_user:etl_pass@postgres-etl-target:5432/etl_db. Альтернатива — создать connection postgres_etl_target_conn через UI Admin -> Connections (те же параметры).
+
+## Backfill / re-fill
+- Запуск за конкретную дату через UI: Trigger DAG -> run_date.
+- Серия дат через CLI контейнера:
+   docker exec -it airflow_services \
+     airflow dags backfill api_to_dw_star_schema \
+     -s 2024-01-01 -e 2024-01-05
+- Перезапуск за день: удалить дагран в UI или выполнить backfill тем же диапазоном — staging/drop обеспечивает идемпотентность.
+
+## Структура данных
+- Staging: staging_posts, staging_users, staging_comments (сырые данные + loaded_at).
+- Dimensions: dim_users, dim_dates (для api DAG); dim_customers, dim_sellers, dim_products, dim_dates (для olist DAG).
+- Facts: fact_posts (метрики: длина текста, word count, число комментариев); fact_order_items/fact_payments (olist).
+
+## Алерты и логирование
+- Логи через стандартный Airflow логгер.
+- При фейле таска _alert_on_failure шлёт письмо на ALERT_EMAILS (нужен настроенный smtp_default или другой e-mail backend).
+
+## Работа с зависимостями (Poetry)
+В контейнере выполняется poetry install --no-root (см. docker-compose.yaml).
+Актуализация зависимостей:
+   poetry lock
+   poetry export -f requirements.txt --without-hashes -o requirements.txt
+
+## Проверка результата
+1) В UI включить DAG api_to_dw_star_schema и сделать Trigger.
+2) Убедиться, что задачи зелёные (для отчёта — скрин Grid/Graph).
+3) Проверить данные:
+   SELECT COUNT(*) FROM staging_posts;
+   SELECT * FROM fact_posts ORDER BY post_id LIMIT 5;
+4) Для Olist — запросы из sql/olist_reporting_queries.sql (row counts, статусы, выручка, топы и т.п.).
+
+## Остановка
+   docker-compose down
+   docker-compose down -v   # остановить и удалить данные в volume
