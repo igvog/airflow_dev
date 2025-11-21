@@ -5,18 +5,20 @@ ETL-проект для датасета Olist (Airflow + PostgreSQL)
 
 Проект выполнен как учебная работа для понимания построения дата-пайплайнов и DWH-моделирования.
 
-⸻
+Структура проекта
+```
 airflow-docker/
 │
 ├── dags/
-│   ├── etl_olist_ecommerce.py       # главный DAG проекта
+│   ├── etl_olist_ecommerce.py      # главный DAG проекта
 │   ├── sql/
-│   │   └── create_olist_dwh.sql     # DWH схема (таблицы Dim/Fact)
-│   └── data/                        # исходные CSV Olist
+│   │   └── create_olist_dwh.sql    # DWH схема (таблицы Dim/Fact)
+│   └── data/                       # исходные CSV Olist
 │
-├── docker-compose.yaml               # запуск Airflow
+├── docker-compose.yaml             # запуск Airflow
 ├── .gitignore
 └── README.md
+```
 
 ## Step 1: Update .env File
 
