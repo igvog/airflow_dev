@@ -176,6 +176,7 @@ yaml
 
 ```sql
 DELETE FROM fact_order_items WHERE date_key = ...
+```
 затем вставляет актуальные данные за этот день.
 
 ✔ Параметризация:
