@@ -45,3 +45,17 @@ with DAG(
             DROP TABLE IF EXISTS stg_game_publishers;
         """
     )
+
+    def download_dataset(**context) -> None:
+        path = dataset_download(
+            'jummyegg/rawg-game-dataset', path='game_info.csv'
+        )
+        context['ti'].xcom_push(key='dataset_path', value=path)
+        print(path)
+
+    download_game_dataset = PythonOperator(
+        task_id='download_game_dataset',
+        python_callable=download_dataset
+    )
+
+    drop_staging_tables >> download_game_dataset
