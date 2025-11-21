@@ -290,30 +290,32 @@ Docker использует requirements.txt, UV — альтернативны�
 
 Проверка staging:
 Копировать код
+
 ```sql
+
 SELECT COUNT(*) FROM stg_orders;
 SELECT COUNT(*) FROM stg_order_items;
 SELECT COUNT(*) FROM stg_order_payments;
 SELECT COUNT(*) FROM stg_customers;
-SELECT COUNT(*) FROM stg_geolocation;```
+SELECT COUNT(*) FROM stg_geolocation;
 Проверка dim:
 Копировать код
-```sql
+
 SELECT COUNT(*) FROM dim_customer;
 SELECT COUNT(*) FROM dim_geolocation;
 SELECT COUNT(*) FROM dim_payment_type;
-SELECT COUNT(*) FROM dim_date;```
+SELECT COUNT(*) FROM dim_date;
 Проверка fact:
 
 Копировать код
-```sql
+
 SELECT COUNT(*) FROM fact_order_items;
 SELECT COUNT(*) FROM fact_order_payments;
-SELECT COUNT(*) FROM fact_order_reviews;```
+SELECT COUNT(*) FROM fact_order_reviews;
 Пример аналитического запроса:
 
 Копировать код
-```sql
+
 SELECT 
     d.year,
     d.month,
@@ -322,6 +324,7 @@ FROM fact_order_items f
 JOIN dim_date d ON d.date_key = f.date_key
 GROUP BY d.year, d.month
 ORDER BY d.year, d.month;```
+
 🎯 11. Итоги проекта
 Реализовано:
 
