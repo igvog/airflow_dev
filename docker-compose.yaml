@@ -98,3 +98,4 @@ volumes:
 networks:
   airflow_network:
     driver: bridge
+
