@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "airflow_etl_project"
+version = "0.1.0"
+description = "ETL pipeline with Airflow"
+authors = ["You"]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+requests = "^2.31.0"
+apache-airflow = "^2.7.1"
+psycopg2-binary = "^2.9.7"
+
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
