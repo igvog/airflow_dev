@@ -297,20 +297,20 @@ SELECT COUNT(*) FROM stg_order_payments;
 SELECT COUNT(*) FROM stg_customers;
 SELECT COUNT(*) FROM stg_geolocation;
 Проверка dim:
-sql
+```sql
 Копировать код
 SELECT COUNT(*) FROM dim_customer;
 SELECT COUNT(*) FROM dim_geolocation;
 SELECT COUNT(*) FROM dim_payment_type;
-SELECT COUNT(*) FROM dim_date;
+SELECT COUNT(*) FROM dim_date;```
 Проверка fact:
-sql
+```sql
 Копировать код
 SELECT COUNT(*) FROM fact_order_items;
 SELECT COUNT(*) FROM fact_order_payments;
-SELECT COUNT(*) FROM fact_order_reviews;
+SELECT COUNT(*) FROM fact_order_reviews;```
 Пример аналитического запроса:
-sql
+```sql
 Копировать код
 SELECT 
     d.year,
@@ -319,7 +319,7 @@ SELECT
 FROM fact_order_items f
 JOIN dim_date d ON d.date_key = f.date_key
 GROUP BY d.year, d.month
-ORDER BY d.year, d.month;
+ORDER BY d.year, d.month;```
 🎯 11. Итоги проекта
 Реализовано:
 
