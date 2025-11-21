@@ -4,6 +4,7 @@ This DAG extracts data from JSONPlaceholder API, loads it into Postgres,
 and transforms it into a star schema data warehouse model.
 """
 
+
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -12,6 +13,14 @@ from airflow.operators.python import PythonOperator
 import requests
 import json
 import logging
+import time
+from dotenv import load_dotenv
+import os
+from airflow.utils.helpers import chain
+
+load_dotenv()  
+
+API_KEY = os.getenv("API_KEY")
 
 # Default arguments
 default_args = {
@@ -42,44 +51,100 @@ with DAG(
         
         # Drop existing staging tables
         drop_staging = """
-        DROP TABLE IF EXISTS staging_posts CASCADE;
-        DROP TABLE IF EXISTS staging_users CASCADE;
-        DROP TABLE IF EXISTS staging_comments CASCADE;
+        DROP TABLE IF EXISTS stg_movies  CASCADE;
+        DROP TABLE IF EXISTS stg_actors  CASCADE;
+        DROP TABLE IF EXISTS stg_credits  CASCADE;
+        DROP TABLE IF EXISTS stg_genres CASCADE;
+        DROP TABLE IF EXISTS stg_companies CASCADE;
+        DROP TABLE IF EXISTS stg_language CASCADE;
+        DROP TABLE IF EXISTS stg_countries CASCADE;
         """
         
         # Create staging tables
         create_staging = """
-        CREATE TABLE IF NOT EXISTS staging_posts (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER,
+        CREATE TABLE IF NOT EXISTS stg_movies (
+            movie_id INTEGER PRIMARY KEY,
             title TEXT,
-            body TEXT,
-            raw_data JSONB,
-            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            original_title TEXT,
+            adult BOOLEAN,
+            overview TEXT,
+            status TEXT,
+            tagline TEXT,
+            original_language TEXT,
+            runtime INTEGER,
+            budget BIGINT,
+            revenue BIGINT,
+            popularity FLOAT,
+            vote_average FLOAT,
+            vote_count INT,
+            homepage TEXT,
+            release_date DATE,
+            raw_json JSONB,
+            loaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
-        CREATE TABLE IF NOT EXISTS staging_users (
-            id INTEGER PRIMARY KEY,
+
+
+        CREATE TABLE IF NOT EXISTS stg_actors (
+            actor_id INTEGER PRIMARY KEY,
             name TEXT,
-            username TEXT,
-            email TEXT,
-            phone TEXT,
-            website TEXT,
-            address JSONB,
-            company JSONB,
-            raw_data JSONB,
-            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            gender INT,
+            popularity FLOAT,
+            known_for_department TEXT,
+            birthday DATE,
+            deathday DATE,
+            place_of_birth TEXT,
+            biography TEXT,
+            raw_json JSONB,
+            loaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
-        CREATE TABLE IF NOT EXISTS staging_comments (
-            id INTEGER PRIMARY KEY,
-            post_id INTEGER,
+
+
+        CREATE TABLE IF NOT EXISTS stg_credits (
+            credit_id SERIAL PRIMARY KEY,
+            movie_id INTEGER,
+            actor_id INTEGER,
+            character_name TEXT,
+            job TEXT,
+            department TEXT,
+            raw_json JSONB,
+            loaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+
+        CREATE TABLE IF NOT EXISTS stg_genres (
+            genre_id INTEGER PRIMARY KEY,
             name TEXT,
-            email TEXT,
-            body TEXT,
-            raw_data JSONB,
-            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            raw_json JSONB,
+            loaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        
+        CREATE TABLE IF NOT EXISTS stg_companies (
+            company_id INTEGER PRIMARY KEY,
+            name TEXT,
+            origin_country TEXT,
+            raw_json JSONB,
+            loaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        
+        CREATE TABLE IF NOT EXISTS stg_languages (
+            language_code TEXT PRIMARY KEY,
+            english_name TEXT,
+            name TEXT,
+            raw_json JSONB,
+            loaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+
+        CREATE TABLE IF NOT EXISTS stg_countries (
+            country_code TEXT PRIMARY KEY,
+            english_name TEXT,
+            name TEXT,
+            raw_json JSONB,
+            loaded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         """
         
         hook.run(drop_staging)
@@ -93,37 +158,69 @@ with DAG(
     
     def fetch_api_data(**context):
         """Fetch data from JSONPlaceholder API"""
-        base_url = "https://jsonplaceholder.typicode.com"
+        BASE_URL = "https://api.themoviedb.org/3"
         
         try:
-            # Fetch posts
-            posts_response = requests.get(f"{base_url}/posts")
-            posts_response.raise_for_status()
-            posts_data = posts_response.json()
-            logging.info(f"Fetched {len(posts_data)} posts from API")
             
-            # Fetch users
-            users_response = requests.get(f"{base_url}/users")
-            users_response.raise_for_status()
-            users_data = users_response.json()
-            logging.info(f"Fetched {len(users_data)} users from API")
+            # Fetch genres
+            genres_resp = requests.get(f"{BASE_URL}/genre/movie/list", params={"api_key": API_KEY})
+            genres_resp.raise_for_status()
+            genres = genres_resp.json().get("genres", [])
+            logging.info(f'Fetched {len(genres)} genres from API')
+
+            # Fetch languages
+            lang_resp = requests.get(f"{BASE_URL}/configuration/languages", params={"api_key": API_KEY})
+            lang_resp.raise_for_status()
+            lang = lang_resp.json()
+            logging.info(f'Fetched {len(lang)} genres from API')
+
+
+            # Fetch countries
+            countries_resp = requests.get(f"{BASE_URL}/configuration/countries", params={"api_key": API_KEY})
+            countries_resp.raise_for_status()
+            countries = countries_resp.json()
+            logging.info(f"Fetched {len(countries)} countries from API")
+
+            movies = []
+
+            # Fetch total pages
+            first_page = requests.get(
+                f"{BASE_URL}/discover/movie",
+                params={"api_key": API_KEY, "page": 1, "sort_by": "popularity.desc"}
+            )
+            first_page.raise_for_status()
+
+            first_page_data = first_page.json()
+            total_pages = first_page_data.get("total_pages", 1)
+            logging.info(f"Total pages available: {total_pages}")
+
+
+            max_pages = min(total_pages, 250)
+            logging.info(f"Will fetch {max_pages} pages (~{max_pages*20} movies).")
+
+            # Fetching first page
+            movies.extend(first_page_data.get("results", []))
             
-            # Fetch comments
-            comments_response = requests.get(f"{base_url}/comments")
-            comments_response.raise_for_status()
-            comments_data = comments_response.json()
-            logging.info(f"Fetched {len(comments_data)} comments from API")
-            
+            # Fetch all pages
+            for page in range(2, max_pages + 1):
+                page_resp = requests.get(f"{BASE_URL}/discover/movie",
+                                            params={"api_key": API_KEY, "page": page})
+                page_resp.raise_for_status()
+                movies.extend(page_resp.json().get("results", []))
+
+            logging.info(f"Fetched total {len(movies)} movies.")
+
             # Store in XCom for next tasks
-            context['ti'].xcom_push(key='posts_data', value=posts_data)
-            context['ti'].xcom_push(key='users_data', value=users_data)
-            context['ti'].xcom_push(key='comments_data', value=comments_data)
-            
+            context['ti'].xcom_push(key='genres_data', value=genres)
+            context['ti'].xcom_push(key='languages_data', value=lang)
+            context['ti'].xcom_push(key='movies_data', value=movies)
+            context['ti'].xcom_push(key='countries_data', value=countries)
+
             return {
-                'posts_count': len(posts_data),
-                'users_count': len(users_data),
-                'comments_count': len(comments_data)
-            }
+                    "genres_count": len(genres),
+                    "languages_count": len(lang),
+                    "movies_count": len(movies)
+                }
         except Exception as e:
             logging.error(f"Error fetching API data: {str(e)}")
             raise
@@ -133,118 +230,377 @@ with DAG(
         python_callable=fetch_api_data,
     )
     
-    def load_posts_to_staging(**context):
-        """Load posts data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        posts_data = context['ti'].xcom_pull(key='posts_data', task_ids='fetch_api_data')
+
+    def fetch_movie_details_and_cast(**context):
+        """
+        Takes movie list from fetch_api_data() XCom and enriches it:
+        - movie_details: full metadata
+        - movie_cast: actors per movie
+        """
+
+        BASE_URL = "https://api.themoviedb.org/3"
+        ti = context["ti"]
+
         
-        for post in posts_data:
-            insert_query = """
-            INSERT INTO staging_posts (id, user_id, title, body, raw_data)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                title = EXCLUDED.title,
-                body = EXCLUDED.body,
-                raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
-            """
-            hook.run(
-                insert_query,
-                parameters=(
-                    post['id'],
-                    post['userId'],
-                    post['title'],
-                    post['body'],
-                    json.dumps(post)
+        # pull movies from previous task
+        movies = ti.xcom_pull(task_ids="fetch_api_data", key="movies_data")
+
+        movie_details = []
+        movie_cast = []
+
+        
+        for m in movies:
+            try:
+                movie_id = m["id"]
+
+                
+                detail_resp = requests.get(
+                    f"{BASE_URL}/movie/{movie_id}",
+                    params={"api_key": API_KEY}
                 )
-            )
+                detail_resp.raise_for_status()
+                details = detail_resp.json()
+
+                movie_details.append(details)
+
+
+                credits_resp = requests.get(
+                    f"{BASE_URL}/movie/{movie_id}/credits",
+                    params={"api_key": API_KEY}
+                )
+                credits_resp.raise_for_status()
+                credits = credits_resp.json().get("cast", [])
+
+                movie_cast.append({
+                    "movie_id": movie_id,
+                    "cast": credits
+                })
+
+                logging.info(f"Fetched details + cast for movie {movie_id}")
+
+            except requests.exceptions.RequestException as e:
+                logging.error(f"Ошибка при запросе к API для movie_id {movie_id}: {e}")
+
+
         
-        logging.info(f"Loaded {len(posts_data)} posts into staging_posts")
+
+        # Push results to XCom
+        ti.xcom_push(key="movie_details_data", value=movie_details)
+        ti.xcom_push(key="movie_cast_data", value=movie_cast)
+
+        return {
+            "details_count": len(movie_details),
+            "cast_count": len(movie_cast)
+        }
+
+    fetch_data_details = PythonOperator(
+        task_id='fetch_movie_details_and_cast',
+        python_callable=fetch_movie_details_and_cast,
+    )
+
+    def load_movies_to_staging(**context):
+        """Load movies data into staging table"""
+
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        movies = context['ti'].xcom_pull(
+            task_ids='fetch_movie_details_and_cast',
+            key='movie_details_data'
+        )
+
+        if not movies:
+            logging.warning('No movies data found in XCom')
+            return
+
+        insert_query = """
+        INSERT INTO stg_movies (
+            movie_id, title, original_title, adult, overview, status, tagline,
+            original_language, runtime, budget, revenue, popularity,
+            vote_average, vote_count, homepage, release_date, raw_json
+        ) VALUES (
+            %(id)s, %(title)s, %(original_title)s, %(adult)s, %(overview)s, %(status)s, %(tagline)s,
+            %(original_language)s, %(runtime)s, %(budget)s, %(revenue)s, %(popularity)s,
+            %(vote_average)s, %(vote_count)s, %(homepage)s, %(release_date)s, %(raw_json)s
+        )
+        ON CONFLICT (movie_id) DO NOTHING;
+        """
+
+        for m in movies:
+            # Convert raw dict → JSON string
+            record = m.copy()
+            record["raw_json"] = json.dumps(m)
+
+            # Convert release_date → YYYY-MM-DD or None
+            rd = m.get("release_date")
+            if rd:
+                try:
+                    record["release_date"] = datetime.strptime(rd, "%Y-%m-%d").date()
+                except:
+                    record["release_date"] = None
+            else:
+                record["release_date"] = None
+
+            hook.run(insert_query, parameters=record)
+
+        logging.info(f"Inserted {len(movies)} movies into stg_movies")
     
-    load_posts = PythonOperator(
-        task_id='load_posts_to_staging',
-        python_callable=load_posts_to_staging,
+    load_movies = PythonOperator(
+        task_id='load_movies_to_staging',
+        python_callable=load_movies_to_staging,
     )
     
-    def load_users_to_staging(**context):
+
+    def load_actors_to_staging(**context):
         """Load users data into staging table"""
+
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        users_data = context['ti'].xcom_pull(key='users_data', task_ids='fetch_api_data')
-        
-        for user in users_data:
-            insert_query = """
-            INSERT INTO staging_users (id, name, username, email, phone, website, address, company, raw_data)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                username = EXCLUDED.username,
-                email = EXCLUDED.email,
-                phone = EXCLUDED.phone,
-                website = EXCLUDED.website,
-                address = EXCLUDED.address,
-                company = EXCLUDED.company,
-                raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
-            """
-            hook.run(
-                insert_query,
-                parameters=(
-                    user['id'],
-                    user['name'],
-                    user['username'],
-                    user['email'],
-                    user.get('phone', ''),
-                    user.get('website', ''),
-                    json.dumps(user.get('address', {})),
-                    json.dumps(user.get('company', {})),
-                    json.dumps(user)
-                )
-            )
-        
-        logging.info(f"Loaded {len(users_data)} users into staging_users")
+        movie_cast_list = context['ti'].xcom_pull(
+            task_ids='fetch_movie_details_and_cast',
+            key='movie_cast_data'
+        )
+
+        if not movie_cast_list:
+            logging.warning("No movie_cast data found in XCom")
+            return
+
+        actors_seen = set()
+
+        insert_sql = """
+        INSERT INTO stg_actors (
+            actor_id, name, gender, popularity, known_for_department,
+            birthday, deathday, place_of_birth, biography, raw_json
+        ) VALUES (
+            %(actor_id)s, %(name)s, %(gender)s, %(popularity)s, %(known_for_department)s,
+            %(birthday)s, %(deathday)s, %(place_of_birth)s, %(biography)s, %(raw_json)s
+        )
+        ON CONFLICT (actor_id) DO NOTHING;
+        """
+
+        for movie_cast in movie_cast_list:
+            for actor in movie_cast["cast"]:
+
+                actor_id = actor.get("id")
+                if not actor_id or actor_id in actors_seen:
+                    continue
+
+                actors_seen.add(actor_id)
+
+                # IMPORTANT: create record with safe defaults
+                record = {
+                    "actor_id": actor.get("id"),
+                    "name": actor.get("name"),
+                    "gender": actor.get("gender"),
+                    "popularity": actor.get("popularity"),
+                    "known_for_department": actor.get("known_for_department"),
+
+                    # credits API does NOT have these fields → use None
+                    "birthday": actor.get("birthday"),
+                    "deathday": actor.get("deathday"),
+                    "place_of_birth": actor.get("place_of_birth"),
+                    "biography": actor.get("biography"),
+
+                    "raw_json": json.dumps(actor)
+                }
+
+                hook.run(insert_sql, parameters=record)
+
+        logging.info(f"Loaded {len(actors_seen)} actors into stg_actors")
     
-    load_users = PythonOperator(
-        task_id='load_users_to_staging',
-        python_callable=load_users_to_staging,
+    load_actors = PythonOperator(
+        task_id='load_actors_to_staging',
+        python_callable=load_actors_to_staging,
     )
     
-    def load_comments_to_staging(**context):
-        """Load comments data into staging table"""
+
+    def load_genres_to_staging(**context):
+        """Load genres data into staging table"""
+
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        comments_data = context['ti'].xcom_pull(key='comments_data', task_ids='fetch_api_data')
+        genres = context['ti'].xcom_pull(key='genres_data', task_ids='fetch_api_data')
+
+        if not genres:
+            logging.warning("No genres data found in XCom")
+            return
+
+        insert_sql = """
+        INSERT INTO stg_genres (genre_id, name, raw_json)
+        VALUES (%(id)s, %(name)s, %(raw_json)s)
+        ON CONFLICT (genre_id) DO NOTHING;
+        """
+
+        for g in genres:
+            record = g.copy()
+            record['raw_json'] = json.dumps(g)  # <-- сериализация словаря в JSON
+            hook.run(insert_sql, parameters=record)
+
+        logging.info(f"Inserted {len(genres)} genres into stg_genres")
         
-        for comment in comments_data:
-            insert_query = """
-            INSERT INTO staging_comments (id, post_id, name, email, body, raw_data)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                post_id = EXCLUDED.post_id,
-                name = EXCLUDED.name,
-                email = EXCLUDED.email,
-                body = EXCLUDED.body,
-                raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
-            """
-            hook.run(
-                insert_query,
-                parameters=(
-                    comment['id'],
-                    comment['postId'],
-                    comment['name'],
-                    comment['email'],
-                    comment['body'],
-                    json.dumps(comment)
-                )
-            )
-        
-        logging.info(f"Loaded {len(comments_data)} comments into staging_comments")
+    load_genres = PythonOperator(
+        task_id='load_genres_to_staging',
+        python_callable=load_genres_to_staging,
+    )
+
+
+    def load_credits_to_staging(**context):
+        """Load credits data into staging table"""
+
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        movie_cast_list = context['ti'].xcom_pull(
+            task_ids='fetch_movie_details_and_cast',
+            key='movie_cast_data'
+        )
+
+        if not movie_cast_list:
+            logging.warning("No movie_cast data found in XCom")
+            return
+
+        insert_sql = """
+        INSERT INTO stg_credits (
+            movie_id, actor_id, character_name, job, department, raw_json
+        ) VALUES (
+            %(movie_id)s, %(actor_id)s, %(character_name)s, %(job)s, %(department)s, %(raw_json)s
+        );
+        """
+
+        rows = 0
+
+        conn = hook.get_conn()
+        cur = conn.cursor()
+
+        for movie_cast in movie_cast_list:
+            movie_id = movie_cast["movie_id"]
+
+            for cast in movie_cast["cast"]:
+                record = {
+                    "movie_id": movie_id,
+                    "actor_id": cast.get("id"),
+                    "character_name": cast.get("character"),
+                    "job": cast.get("job"),
+                    "department": cast.get("department"),
+                    "raw_json": json.dumps(cast)
+                }
+
+                cur.execute(insert_sql, record)
+                rows += 1
+
+        conn.commit()  # <-- ключевой момент, сохраняем вставки
+        cur.close()
+
+        logging.info(f"Inserted {rows} credits into stg_credits")
     
-    load_comments = PythonOperator(
-        task_id='load_comments_to_staging',
-        python_callable=load_comments_to_staging,
+    load_credits = PythonOperator(
+        task_id='load_credits_to_staging',
+        python_callable=load_credits_to_staging,
+    )
+
+
+    def load_languages_to_staging(**context):
+        """Load languages data into staging table"""
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        languages = context['ti'].xcom_pull(key='languages_data', task_ids='fetch_api_data')
+        
+        if not languages:
+            logging.warning("No languages data found in XCom")
+            return
+
+        insert_sql = """
+        INSERT INTO stg_languages (language_code, english_name, name, raw_json)
+        VALUES (%(iso_639_1)s, %(english_name)s, %(name)s, %(raw_json)s)
+        ON CONFLICT (language_code) DO NOTHING;
+        """
+
+        for l in languages:
+            record = l.copy()
+            record['raw_json'] = json.dumps(l)  # <-- сериализуем словарь в JSON
+            hook.run(insert_sql, parameters=record)
+
+        logging.info(f"Inserted {len(languages)} languages into stg_languages")
+    
+    load_languages = PythonOperator(
+        task_id='load_languages_to_staging',
+        python_callable=load_languages_to_staging,
     )
     
+
+    def load_countries_to_staging(**context):
+        """Load countries data into staging table"""
+        
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        countries = context['ti'].xcom_pull(task_ids='fetch_api_data', key='countries_data')
+
+        if not countries:
+            logging.warning("No countries data found in XCom")
+            return
+
+        insert_sql = """
+        INSERT INTO stg_countries (country_code, english_name, raw_json)
+        VALUES (%(iso_3166_1)s, %(english_name)s, %(raw_json)s)
+        ON CONFLICT (country_code) DO NOTHING;
+        """
+
+        conn = hook.get_conn()
+        cur = conn.cursor()
+        rows = 0
+
+        for c in countries:
+            record = c.copy()
+            record['raw_json'] = json.dumps(c)  # serialize dictionary to JSON
+            cur.execute(insert_sql, record)
+            rows += 1
+
+        conn.commit()
+        cur.close()
+
+        logging.info(f"Inserted {rows} countries into stg_countries")
+
+    load_countries = PythonOperator(
+        task_id='load_countries_to_staging',
+        python_callable=load_countries_to_staging,
+    )
+
+    def load_companies_to_staging(**context):
+        """Load production companies data into staging table"""
+
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        movies = context['ti'].xcom_pull(task_ids='fetch_movie_details_and_cast', key='movie_details_data')
+
+        if not movies:
+            logging.warning("No movies data found in XCom")
+            return
+
+        insert_sql = """
+        INSERT INTO stg_companies (company_id, name, origin_country, raw_json)
+        VALUES (%(id)s, %(name)s, %(origin_country)s, %(raw_json)s)
+        ON CONFLICT (company_id) DO NOTHING;
+        """
+
+        conn = hook.get_conn()
+        cur = conn.cursor()
+        rows = 0
+        companies_seen = set()
+
+        for m in movies:
+            for company in m.get('production_companies', []):
+                company_id = company.get('id')
+                if company_id in companies_seen:
+                    continue
+                companies_seen.add(company_id)
+
+                record = company.copy()
+                record['raw_json'] = json.dumps(company)  # store full JSON
+                cur.execute(insert_sql, record)
+                rows += 1
+
+        conn.commit()
+        cur.close()
+
+        logging.info(f"Inserted {rows} production companies into stg_companies")
+
+
+    load_companies = PythonOperator(
+        task_id='load_companies_to_staging',
+        python_callable=load_companies_to_staging,
+    )
+
     # ========== DATA WAREHOUSE LAYER (STAR SCHEMA) ==========
     
     create_dw_schema = PostgresOperator(
@@ -252,184 +608,492 @@ with DAG(
         postgres_conn_id='postgres_etl_target_conn',
         sql="""
         -- Drop existing DW tables
-        DROP TABLE IF EXISTS fact_posts CASCADE;
-        DROP TABLE IF EXISTS dim_users CASCADE;
-        DROP TABLE IF EXISTS dim_dates CASCADE;
+        DROP TABLE IF EXISTS fact_cast CASCADE;
+        DROP TABLE IF EXISTS fact_movie_ratings CASCADE;
+        DROP TABLE IF EXISTS dim_movie CASCADE;
+        DROP TABLE IF EXISTS dim_actor CASCADE;
+        DROP TABLE IF EXISTS dim_genre CASCADE;
+        DROP TABLE IF EXISTS dim_company CASCADE;
+        DROP TABLE IF EXISTS dim_language CASCADE;
+        DROP TABLE IF EXISTS dim_country CASCADE;
+        DROP TABLE IF EXISTS bridge_movie_genre CASCADE;
+        DROP TABLE IF EXISTS bridge_movie_company CASCADE;
         
-        -- Dimension: Users
-        CREATE TABLE dim_users (
-            user_key SERIAL PRIMARY KEY,
-            user_id INTEGER UNIQUE NOT NULL,
-            username VARCHAR(100),
+        -- Dimension: Actors
+        CREATE TABLE dim_actor (
+            actor_key SERIAL PRIMARY KEY,
+            actor_id INTEGER UNIQUE NOT NULL,
             name VARCHAR(200),
-            email VARCHAR(200),
-            phone VARCHAR(50),
-            website VARCHAR(200),
-            city VARCHAR(100),
-            company_name VARCHAR(200),
+            gender INT,
+            known_for_department VARCHAR(100),
+            birthday DATE,
+            deathday DATE,
+            place_of_birth VARCHAR(200),
+            biography TEXT,
+            popularity FLOAT,
             valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             valid_to TIMESTAMP,
             is_current BOOLEAN DEFAULT TRUE,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         
-        -- Dimension: Dates (for time-based analysis)
-        CREATE TABLE dim_dates (
-            date_key INTEGER PRIMARY KEY,
-            full_date DATE NOT NULL,
-            year INTEGER,
-            quarter INTEGER,
-            month INTEGER,
-            month_name VARCHAR(20),
-            day INTEGER,
-            day_of_week INTEGER,
-            day_name VARCHAR(20),
-            is_weekend BOOLEAN
-        );
-        
-        -- Fact: Posts (with metrics)
-        CREATE TABLE fact_posts (
-            post_key SERIAL PRIMARY KEY,
-            post_id INTEGER NOT NULL,
-            user_key INTEGER REFERENCES dim_users(user_key),
-            date_key INTEGER REFERENCES dim_dates(date_key),
-            title TEXT,
-            body TEXT,
-            body_length INTEGER,
-            word_count INTEGER,
-            comment_count INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        -- Dimension: Movies
+        CREATE TABLE dim_movie (
+            movie_key SERIAL PRIMARY KEY,
+            movie_id INTEGER UNIQUE NOT NULL,
+            title VARCHAR(300),
+            original_title VARCHAR(300),
+            adult BOOLEAN,
+            overview TEXT,
+            status VARCHAR(50),
+            tagline TEXT,
+            original_language VARCHAR(10),
+            runtime INT,
+            budget BIGINT,
+            revenue BIGINT,
+            popularity FLOAT,
+            vote_average FLOAT,
+            vote_count INT,
+            homepage VARCHAR(300),
+            release_date DATE,
+            valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            valid_to TIMESTAMP,
+            is_current BOOLEAN DEFAULT TRUE,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         
-        -- Create indexes for better query performance
-        CREATE INDEX idx_fact_posts_user_key ON fact_posts(user_key);
-        CREATE INDEX idx_fact_posts_date_key ON fact_posts(date_key);
-        CREATE INDEX idx_fact_posts_post_id ON fact_posts(post_id);
-        """,
+        -- Dimension: Genre
+        CREATE TABLE dim_genre (
+            genre_key SERIAL PRIMARY KEY,
+            genre_id INTEGER UNIQUE NOT NULL,
+            name VARCHAR(100),
+            valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            valid_to TIMESTAMP,
+            is_current BOOLEAN DEFAULT TRUE,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        -- Dimension: Companies
+        CREATE TABLE dim_company (
+            company_key SERIAL PRIMARY KEY,
+            company_id INTEGER UNIQUE NOT NULL,
+            name VARCHAR(200),
+            origin_country VARCHAR(10),
+            valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            valid_to TIMESTAMP,
+            is_current BOOLEAN DEFAULT TRUE,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Dimension: Languages
+        CREATE TABLE dim_language (
+            language_code VARCHAR(10) PRIMARY KEY,
+            english_name VARCHAR(100),
+            name VARCHAR(100),
+            valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            valid_to TIMESTAMP,
+            is_current BOOLEAN DEFAULT TRUE,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Dimension: Countries
+        CREATE TABLE dim_country (
+            country_code VARCHAR(10) PRIMARY KEY,
+            english_name VARCHAR(100),
+            name VARCHAR(100),
+            valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            valid_to TIMESTAMP,
+            is_current BOOLEAN DEFAULT TRUE,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Bridge table: Movie ↔ Genre (many-to-many)
+        CREATE TABLE bridge_movie_genre (
+            movie_key INT REFERENCES dim_movie(movie_key),
+            genre_key INT REFERENCES dim_genre(genre_key),
+            PRIMARY KEY(movie_key, genre_key)
+        );
+
+        -- Bridge table: Movie ↔ Company (many-to-many)
+        CREATE TABLE bridge_movie_company (
+            movie_key INT REFERENCES dim_movie(movie_key),
+            company_key INT REFERENCES dim_company(company_key),
+            PRIMARY KEY(movie_key, company_key)
+        );
+
+        -- Fact table: Cast
+        CREATE TABLE fact_cast (
+            fact_cast_key SERIAL PRIMARY KEY,
+            movie_key INT REFERENCES dim_movie(movie_key),
+            actor_key INT REFERENCES dim_actor(actor_key),
+            character_name VARCHAR(200),
+            job VARCHAR(100),
+            department VARCHAR(100),
+            loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Fact table: Movie Ratings / Popularity
+        CREATE TABLE fact_movie_ratings (
+            fact_rating_key SERIAL PRIMARY KEY,
+            movie_key INT REFERENCES dim_movie(movie_key),
+            vote_average FLOAT,
+            vote_count INT,
+            popularity FLOAT,
+            rating_date DATE DEFAULT CURRENT_DATE
+        );
+
+        -- Indexes for faster joins
+        CREATE INDEX idx_fact_cast_movie_key ON fact_cast(movie_key);
+        CREATE INDEX idx_fact_cast_actor_key ON fact_cast(actor_key);
+        CREATE INDEX idx_fact_movie_ratings_movie_key ON fact_movie_ratings(movie_key);
+        """
     )
     
-    def populate_dim_users(**context):
-        """Populate user dimension table from staging"""
+    def populate_dim_movies(**context):
+        """Populate movies dimension table from staging"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         
         sql = """
-        INSERT INTO dim_users (user_id, username, name, email, phone, website, city, company_name)
-        SELECT DISTINCT
-            id as user_id,
-            username,
-            name,
-            email,
-            phone,
-            website,
-            address->>'city' as city,
-            company->>'name' as company_name
-        FROM staging_users
-        ON CONFLICT (user_id) DO UPDATE SET
-            username = EXCLUDED.username,
+        MERGE INTO dim_movie d
+        USING stg_movies s
+        ON d.movie_id = s.movie_id AND d.is_current = TRUE
+
+        WHEN MATCHED AND (
+            d.title IS DISTINCT FROM s.title
+            OR d.original_title IS DISTINCT FROM s.original_title
+            OR d.overview IS DISTINCT FROM s.overview
+            OR d.status IS DISTINCT FROM s.status
+            OR d.tagline IS DISTINCT FROM s.tagline
+            OR d.runtime IS DISTINCT FROM s.runtime
+            OR d.budget IS DISTINCT FROM s.budget
+            OR d.revenue IS DISTINCT FROM s.revenue
+            OR d.popularity IS DISTINCT FROM s.popularity
+            OR d.vote_average IS DISTINCT FROM s.vote_average
+            OR d.vote_count IS DISTINCT FROM s.vote_count
+            OR d.homepage IS DISTINCT FROM s.homepage
+            OR d.release_date IS DISTINCT FROM s.release_date
+        ) THEN
+            UPDATE SET 
+                valid_to = CURRENT_TIMESTAMP,
+                is_current = FALSE
+
+        WHEN NOT MATCHED THEN
+            INSERT (
+                movie_id, title, original_title, adult, overview, status, tagline,
+                original_language, runtime, budget, revenue, popularity,
+                vote_average, vote_count, homepage, release_date,
+                valid_from, is_current
+            )
+            VALUES (
+                s.movie_id, s.title, s.original_title, s.adult, s.overview, s.status, s.tagline,
+                s.original_language, s.runtime, s.budget, s.revenue, s.popularity,
+                s.vote_average, s.vote_count, s.homepage, s.release_date,
+                CURRENT_TIMESTAMP, TRUE
+            );
+        """
+        
+        hook.run(sql)
+        logging.info("Populated dim_movie dimension table")
+    
+    populate_dim_movies_task = PythonOperator(
+        task_id='populate_dim_movies',
+        python_callable=populate_dim_movies,
+    )
+
+    def populate_dim_actors(**context):
+        """Populate actors dimension table from staging"""
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+        
+        sql = """
+        MERGE INTO dim_actor d
+        USING(
+            SELECT 
+                actor_id,
+                name, 
+                gender,
+                known_for_department,
+                birthday,
+                deathday,
+                place_of_birth,
+                biography,
+                popularity
+            FROM stg_actors
+        ) s
+        ON d.actor_id = s.actor_id and d.is_current = TRUE
+
+        WHEN MATCHED AND(
+                d.name IS DISTINCT FROM s.name
+            OR  d.gender IS DISTINCT FROM s.gender
+            OR d.known_for_department IS DISTINCT FROM s.known_for_department
+            OR d.birthday IS DISTINCT FROM s.birthday
+            OR d.deathday IS DISTINCT FROM s.deathday
+            OR d.place_of_birth IS DISTINCT FROM s.place_of_birth
+            OR d.biography IS DISTINCT FROM s.biography
+            OR d.popularity IS DISTINCT FROM s.popularity
+        ) THEN
+            UPDATE SET
+                valid_to = CURRENT_TIMESTAMP,
+                is_current = FALSE
+
+        WHEN NOT MATCHED THEN 
+            INSERT(
+                actor_id, name, gender, known_for_department,
+                birthday, deathday, place_of_birth, biography,
+                popularity, valid_from, is_current
+            )
+            VALUES(
+                s.actor_id, s.name, s.gender, s.known_for_department,
+                s.birthday, s.deathday, s.place_of_birth, s.biography,
+                s.popularity, CURRENT_TIMESTAMP, TRUE
+            );
+        """
+        
+        hook.run(sql)
+        logging.info("Populated dim_actor dimension table")
+    
+    populate_dim_actors_task = PythonOperator(
+        task_id='populate_dim_actors',
+        python_callable=populate_dim_actors,
+    )
+    
+
+    def populate_dim_language(**context):
+        """Populate genre dimension table"""
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')        
+        
+        sql = """
+        INSERT INTO dim_language (language_code, english_name, name, valid_from, is_current, updated_at)
+        SELECT language_code, english_name, name, NOW(), TRUE, NOW()
+        FROM stg_languages
+        ON CONFLICT (language_code) DO UPDATE
+        SET english_name = EXCLUDED.english_name,
             name = EXCLUDED.name,
-            email = EXCLUDED.email,
-            phone = EXCLUDED.phone,
-            website = EXCLUDED.website,
-            city = EXCLUDED.city,
-            company_name = EXCLUDED.company_name,
-            updated_at = CURRENT_TIMESTAMP;
+            updated_at = NOW();
         """
-        
+
         hook.run(sql)
-        logging.info("Populated dim_users dimension table")
+        logging.info("Populated dim_language dimension table")
+
     
-    populate_dim_users_task = PythonOperator(
-        task_id='populate_dim_users',
-        python_callable=populate_dim_users,
+    populate_dim_language_task = PythonOperator(
+        task_id='populate_dim_language',
+        python_callable=populate_dim_language,
     )
     
-    def populate_dim_dates(**context):
-        """Populate date dimension table"""
+    def populate_dim_genre(**context):
+        """Populate genre dimension table"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
-        # Generate dates for the next 5 years
+
         sql = """
-        INSERT INTO dim_dates (date_key, full_date, year, quarter, month, month_name, day, day_of_week, day_name, is_weekend)
+        INSERT INTO dim_genre (genre_id, name, valid_from, is_current, updated_at)
+        SELECT genre_id, name, NOW(), TRUE, NOW()
+        FROM stg_genres
+        ON CONFLICT (genre_id) DO UPDATE
+        SET name = EXCLUDED.name,
+            updated_at = NOW();
+        """
+
+        hook.run(sql)
+        logging.info("Populated dim_genre dimension table")
+    
+    populate_dim_genre_task = PythonOperator(
+        task_id='populate_dim_genre',
+        python_callable=populate_dim_genre,
+    )
+
+
+    def populate_dim_country(**context):
+        """Populate country dimension table"""
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+    
+        sql = """
+        INSERT INTO dim_country (country_code, english_name, name, valid_from, is_current, updated_at)
+        SELECT country_code, english_name, name, NOW(), TRUE, NOW()
+        FROM stg_countries
+        ON CONFLICT (country_code) DO UPDATE
+        SET english_name = EXCLUDED.english_name,
+            name = EXCLUDED.name,
+            updated_at = NOW();
+        """
+
+        hook.run(sql)
+        logging.info("Populated dim_country dimension table")
+
+    populate_dim_country_task = PythonOperator(
+        task_id='populate_dim_country',
+        python_callable=populate_dim_country,
+    )
+    
+
+    def populate_dim_company(**context):
+        """Populate company dimension table"""
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+
+        sql = """
+        INSERT INTO dim_company (company_id, name, origin_country, valid_from, is_current, updated_at)
+        SELECT company_id, name, origin_country, NOW(), TRUE, NOW()
+        FROM stg_companies
+        ON CONFLICT (company_id) DO UPDATE
+        SET name = EXCLUDED.name,
+            origin_country = EXCLUDED.origin_country,
+            updated_at = NOW();
+        """
+
+        hook.run(sql)
+        logging.info("Populated dim_company dimension table")
+
+    populate_dim_company_task = PythonOperator(
+        task_id='populate_dim_company',
+        python_callable=populate_dim_company,
+    )
+
+
+    def populate_bridge_movie_genre(**context):
+        """Populate movie_genre bridge table"""
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+
+        sql = """
+        WITH movie_genre_pairs AS (
+            SELECT
+                s.movie_id,
+                g.genre_id::int AS genre_id_from_ids,
+                (ge.g->>'id')::int AS genre_id_from_objects
+            FROM stg_movies s
+            LEFT JOIN LATERAL jsonb_array_elements_text(s.raw_json->'genre_ids') AS g(genre_id)
+                ON TRUE
+            LEFT JOIN LATERAL jsonb_array_elements(s.raw_json->'genres') AS ge(g)
+                ON TRUE
+            WHERE s.raw_json IS NOT NULL
+        )
+
+        INSERT INTO bridge_movie_genre (movie_key, genre_key)
+        SELECT DISTINCT
+            dm.movie_key,
+            dg.genre_key
+        FROM movie_genre_pairs mg
+        JOIN dim_movie dm
+            ON dm.movie_id = mg.movie_id
+        JOIN dim_genre dg
+            ON dg.genre_id = COALESCE(mg.genre_id_from_ids, mg.genre_id_from_objects)
+        WHERE COALESCE(mg.genre_id_from_ids, mg.genre_id_from_objects) IS NOT NULL
+        ON CONFLICT DO NOTHING;
+        """
+
+        hook.run(sql)
+        logging.info("bridge_movie_genre populated")
+
+    populate_bridge_movie_genre_task = PythonOperator(
+        task_id='populate_bridge_movie_genre',
+        python_callable=populate_bridge_movie_genre,
+    )
+
+
+    def populate_bridge_movie_company(**context):
+        """Populate bridge_movie_company bridge table"""
+
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+
+        sql = """
+        WITH movie_company_pairs AS (
         SELECT
-            TO_CHAR(d, 'YYYYMMDD')::INTEGER as date_key,
-            d::DATE as full_date,
-            EXTRACT(YEAR FROM d)::INTEGER as year,
-            EXTRACT(QUARTER FROM d)::INTEGER as quarter,
-            EXTRACT(MONTH FROM d)::INTEGER as month,
-            TO_CHAR(d, 'Month') as month_name,
-            EXTRACT(DAY FROM d)::INTEGER as day,
-            EXTRACT(DOW FROM d)::INTEGER as day_of_week,
-            TO_CHAR(d, 'Day') as day_name,
-            CASE WHEN EXTRACT(DOW FROM d) IN (0, 6) THEN TRUE ELSE FALSE END as is_weekend
-        FROM generate_series(
-            '2020-01-01'::DATE,
-            '2025-12-31'::DATE,
-            '1 day'::INTERVAL
-        ) d
-        ON CONFLICT (date_key) DO NOTHING;
+            s.movie_id,
+            (pc.elem->>'id')::int AS company_id
+        FROM stg_movies s,
+        LATERAL (
+            SELECT jsonb_array_elements(s.raw_json->'production_companies') AS elem
+        ) pc
+        WHERE s.raw_json ? 'production_companies'
+        )
+        INSERT INTO bridge_movie_company (movie_key, company_key)
+        SELECT DISTINCT dm.movie_key, dc.company_key
+        FROM movie_company_pairs mc
+        JOIN dim_movie dm ON dm.movie_id = mc.movie_id
+        JOIN dim_company dc ON dc.company_id = mc.company_id
+        ON CONFLICT (movie_key, company_key) DO NOTHING;
         """
-        
         hook.run(sql)
-        logging.info("Populated dim_dates dimension table")
-    
-    populate_dim_dates_task = PythonOperator(
-        task_id='populate_dim_dates',
-        python_callable=populate_dim_dates,
+        logging.info("bridge_movie_company populated")
+
+    populate_bridge_movie_company_task = PythonOperator(
+        task_id='populate_bridge_movie_company',
+        python_callable=populate_bridge_movie_company,
     )
-    
-    def populate_fact_posts(**context):
-        """Populate fact table with posts data"""
+
+
+    def populate_fact_movie_ratings(**context):
+        """Populate fact_movie_ratings fact table"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        
+
         sql = """
-        MERGE INTO public.fact_posts AS e USING (SELECT
-            sp.id as post_id,
-            du.user_key,
-            TO_CHAR(sp.loaded_at, 'YYYYMMDD')::INTEGER as date_key,
-            sp.title,
-            sp.body,
-            LENGTH(sp.body) as body_length,
-            array_length(string_to_array(sp.body, ' '), 1) as word_count,
-            COALESCE(comment_counts.comment_count, 0) as comment_count
-        FROM staging_posts sp
-        INNER JOIN dim_users du ON sp.user_id = du.user_id
-        LEFT JOIN (
-            SELECT post_id, COUNT(*) as comment_count
-            FROM staging_comments
-            GROUP BY post_id
-        ) comment_counts ON sp.id = comment_counts.post_id) AS u
-        ON u.post_id = e.post_id
-        WHEN MATCHED THEN
-            UPDATE SET  user_key = u.user_key,
-            date_key = u.date_key,
-            title = u.title,
-            body = u.body,
-            body_length = u.body_length,
-            word_count = u.word_count,
-            comment_count = u.comment_count,
-            updated_at = CURRENT_TIMESTAMP
-    WHEN NOT MATCHED THEN
-        INSERT (post_id, user_key, date_key, title, body, body_length, word_count, comment_count)
-        VALUES (u.post_id, u.user_key, u.date_key, u.title, u.body, u.body_length, u.word_count, u.comment_count);
+        INSERT INTO fact_movie_ratings (movie_key, vote_average, vote_count, popularity, rating_date)
+        SELECT dm.movie_key, s.vote_average, s.vote_count, s.popularity, COALESCE(s.release_date, CURRENT_DATE)
+        FROM stg_movies s
+        JOIN dim_movie dm ON dm.movie_id = s.movie_id
+        WHERE s.vote_average IS NOT NULL OR s.vote_count IS NOT NULL OR s.popularity IS NOT NULL;
         """
-        
+
         hook.run(sql)
-        logging.info("Populated fact_posts fact table")
-    
-    populate_fact_posts_task = PythonOperator(
-        task_id='populate_fact_posts',
-        python_callable=populate_fact_posts,
+        logging.info("fact_movie_ratings populated")
+
+    populate_fact_movie_ratings_task = PythonOperator(
+        task_id='populate_fact_movie_ratings',
+        python_callable=populate_fact_movie_ratings,
     )
-    
+
+
+    def populate_fact_cast(**context):
+        """Populate fact_cast fact table"""
+        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
+
+        sql = """
+        INSERT INTO fact_cast (movie_key, actor_key, character_name, job, department, loaded_at)
+        SELECT DISTINCT
+            dm.movie_key,
+            da.actor_key,
+            LEFT(c.character_name, 200),
+            LEFT(c.job, 200),
+            LEFT(c.department, 200),
+            NOW()
+        FROM stg_credits c
+        JOIN dim_movie dm ON dm.movie_id = c.movie_id
+        JOIN dim_actor da ON da.actor_id = c.actor_id
+        WHERE c.actor_id IS NOT NULL
+        ON CONFLICT DO NOTHING;
+        """
+        hook.run(sql)
+        logging.info("fact_cast populated")
+
+    populate_fact_cast_task = PythonOperator(
+        task_id='populate_fact_cast',
+        python_callable=populate_fact_cast,
+    )
+
+
     # ========== TASK DEPENDENCIES ==========
     
-    # Staging layer
     create_staging >> fetch_data
-    fetch_data >> [load_posts, load_users, load_comments]
+    fetch_data >> fetch_data_details
+    fetch_data_details >> [load_movies, load_actors, load_genres, load_languages, load_credits, load_companies, load_countries]
+
+    for task in [load_movies, load_actors, load_genres, load_languages, load_credits, load_companies, load_countries]:
+        task >> create_dw_schema
+
+    create_dw_schema >> [populate_dim_actors_task, 
+                        populate_dim_movies_task, 
+                        populate_dim_language_task, 
+                        populate_dim_genre_task, 
+                        populate_dim_country_task,
+                        populate_dim_company_task]
+
+    for dim_task in [populate_dim_actors_task, populate_dim_movies_task, populate_dim_language_task,
+                 populate_dim_genre_task, populate_dim_country_task, populate_dim_company_task]:
+        for bridge_task in [populate_bridge_movie_genre_task, populate_bridge_movie_company_task]:
+            dim_task >> bridge_task
+
+
+    for bridge_task in [populate_bridge_movie_genre_task, populate_bridge_movie_company_task]:
+        for fact_task in [populate_fact_cast_task, populate_fact_movie_ratings_task]:
+            bridge_task >> fact_task
+
     
-    # Data warehouse layer
-    [load_posts, load_users, load_comments] >> create_dw_schema
-    create_dw_schema >> [populate_dim_users_task, populate_dim_dates_task]
-    [populate_dim_users_task, populate_dim_dates_task] >> populate_fact_posts_task
 

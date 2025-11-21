@@ -33,7 +33,7 @@ services:
     environment:
       - POSTGRES_USER=airflow
       - POSTGRES_PASSWORD=airflow
-      - POSTGRES_DB=airflow
+      - POSTGRES_DB=airflow_fr
     volumes:
       - airflow-db-data:/var/lib/postgresql/data
     networks:
