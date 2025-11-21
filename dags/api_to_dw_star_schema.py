@@ -16,14 +16,17 @@ import logging
 # Custom Plugin to TypeDict Validate json
 from typeddicts import Customer, Order, Seller, OrderItem  #type: ignore
 
+PG_CONN = "pg_conn"
+
 # Default arguments
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'email_on_failure': False,
-    'email_on_retry': False,
     'retries': 1,
-    'retry_delay': timedelta(minutes=5),
+    'retry_delay': timedelta(minutes=1),
+    'email': ['zhanzakovdamir2000@gmail.com'], #email to alert to in case of failed tasks
+    'email_on_failure': True,
+    'email_on_retry': True
 }
 
 # DAG definition
@@ -41,7 +44,7 @@ with DAG(
     
     def create_staging_tables(**context):
         """Create staging tables for raw API data"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
+        hook = PostgresHook(postgres_conn_id='pg_conn1')
         
         # Drop existing staging tables
         drop_staging = """
@@ -113,102 +116,36 @@ with DAG(
         python_callable=create_staging_tables,
     )
     
-    # ==== Last offset Implementation ====
-    def create_last_offset(**context):
-        """Create table to keep last offset"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
-        url = """
-                CREATE TABLE IF NOT EXISTS etl_metadata (
-                    table_name TEXT PRIMARY KEY,
-                    last_offset INTEGER DEFAULT 0,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                """
-        hook.run(url)
-        logging.info("etl_metadata table created!")
-
-    def get_last_offset(**context):
-        """Read the last processed offset from metadata table"""
-        hook = PostgresHook(postgres_conn_id='pg_conn')
-        ti = context['ti']
-        tables = ['order_items', 'orders', 'customers', 'sellers']
-        offsets = {}
-        for table in tables:
-            record = hook.get_records("SELECT last_offset FROM etl_metadata WHERE table_name = %s", parameters=(table,))
-            if not record:
-                logging.info(f"No last offset detected. Passing by 0 for {table}")
-            offsets[table] = record[0][0] or 0
-        ti.xcom_push(key='offsets', value=offsets)
-
-
-    def update_last_offset(**context):
-        """
-        Update last processed offsets using counts returned by fetch_api_data.
-        """
-        hook = PostgresHook(postgres_conn_id='pg_conn')
-        ti = context['ti']
-
-        # Pull counts returned by fetch_api_data
-        counts = ti.xcom_pull(task_ids='fetch_api_data')
-        if not counts:
-            logging.warning("No counts found from fetch_api_data, skipping offset update.")
-            return
-
-        for table_map, count in [
-            ('order_items', counts.get('order_items_count', 0)),
-            ('orders', counts.get('orders_count', 0)),
-            ('customers', counts.get('customers_count', 0)),
-            ('sellers', counts.get('sellers_count', 0))
-        ]:
-            # Get previous offset
-            record = hook.get_first("SELECT last_offset FROM etl_metadata WHERE table_name = %s", parameters=(table_map,))
-            last_offset = record[0] if record else 0
-            new_offset = last_offset + count
-
-            # Update metadata table
-            sql = """
-                INSERT INTO etl_metadata (table_name, last_offset, updated_at)
-                VALUES (%s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (table_name) DO UPDATE
-                SET last_offset = EXCLUDED.last_offset,
-                    updated_at = CURRENT_TIMESTAMP;
-            """
-            hook.run(sql, parameters=(table_map, new_offset))
-            logging.info(f"Updated last_offset for {table_map} to {new_offset}")
-
-    
     # ====================
     
     def fetch_api_data(**context):
         """Fetch data from JSONPlaceholder API"""
         base_url = "http://fastapi_app:8000"
-        ti = context['ti']
 
         #TODO: implement offset and limit def: 100 100
         limit = 100
-        offset_ = context['ti'].xcom_pull(key='', task_ids="get_last_offset")
 
         try:
             # Fetch order_items
-            order_items = requests.get(f"{base_url}/order_items")
+            order_items = requests.get(f"{base_url}/order_items?limit={limit}")
             order_items.raise_for_status()
             order_items_data:list[OrderItem] = order_items.json()
             logging.info(f"Fetched {len(order_items_data)} posts from API")
 
             # Fetch orders
-            orders_response = requests.get(f"{base_url}/orders")
+            orders_response = requests.get(f"{base_url}/orders?limit={limit}")
             orders_response.raise_for_status()
             orders_data:list[Order] = orders_response.json()
             logging.info(f"Fetched {len(orders_data)} orders from API")
 
             # Fetch customers
-            customers_response = requests.get(f"{base_url}/customers")
+            customers_response = requests.get(f"{base_url}/customers?limit={limit}")
             customers_response.raise_for_status()
             customers_data:list[Customer] = customers_response.json()
             logging.info(f"Fetched {len(customers_data)} customers from API")
 
             # Fetch sellers
-            sellers_response = requests.get(f"{base_url}/sellers")
+            sellers_response = requests.get(f"{base_url}/sellers?limit={limit}")
             sellers_response.raise_for_status()
             sellers_data:list[Seller] = sellers_response.json()
             logging.info(f"Fetched {len(sellers_data)} sellers from API")
@@ -285,7 +222,7 @@ with DAG(
     
     def load_orders_to_staging(**context):
         """Loads orders into staging table"""
-        hook = PostgresHook(postgres_conn_id="pg_conn")
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
         orders:list[Order] = context['ti'].xcom_pull(key='orders_data', task_ids="fetch_api_data")
         
         for order in orders:
@@ -528,7 +465,7 @@ with DAG(
     )
 
     def populate_dim_orders(**context):
-        hook = PostgresHook(postgres_conn_id="pg_conn")
+        hook = PostgresHook(postgres_conn_id=PG_CONN)
 
         sql = """
             INSERT INTO dim_orders (
