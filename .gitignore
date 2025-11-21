@@ -22,6 +22,8 @@ var/
 wheels/
 share/python-wheels/
 *.egg-info/
+dags/files/*.csv
+!dags/files/movies_metadata.csv
 .installed.cfg
 *.egg
 MANIFEST
