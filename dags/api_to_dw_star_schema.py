@@ -44,7 +44,7 @@ with DAG(
     
     def create_staging_tables(**context):
         """Create staging tables for raw API data"""
-        hook = PostgresHook(postgres_conn_id='pg_conn1')
+        hook = PostgresHook(postgres_conn_id='pg_conn')
         
         # Drop existing staging tables
         drop_staging = """
