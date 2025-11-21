@@ -1,2 +1,4 @@
 apache-airflow-providers-postgres
 requests
+pandas
+psycopg2-binaryuv.lock

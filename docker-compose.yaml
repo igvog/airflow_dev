@@ -12,6 +12,7 @@ x-airflow-common: &airflow-common
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/requirements.txt
+    - ./data:/opt/airflow/data
   networks:
     - airflow_network # All services on this network
   depends_on:
@@ -50,7 +51,7 @@ services:
     image: postgres:15
     container_name: postgres-etl-target
     ports:
-      - "5433:5432" # Expose on host port 5433 to avoid conflict
+      - "5444:5432" # Expose on host port 5433 to avoid conflict
     environment:
       - POSTGRES_USER=etl_user
       - POSTGRES_PASSWORD=etl_pass

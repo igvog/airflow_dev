@@ -1,0 +1,14 @@
+[project]
+name = "airflow-dev"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "apache-airflow>=2.9.2",
+    "kagglehub>=0.3.13",
+    "pandas>=2.3.3",
+    "psycopg2-binary>=2.9.11",
+    "python-telegram-bot>=22.5",
+    "requests>=2.32.5",
+]

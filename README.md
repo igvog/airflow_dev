@@ -1,3 +1,67 @@
+# Olist E-Commerce Data Warehouse (Capstone Project)
+
+**Author:** Sultan Myrzash  
+**Stack:** Apache Airflow, PostgreSQL, Python, Pandas, Docker  
+**Package Manager:** UV
+
+## Project Overview
+This project implements an End-to-End Data Pipeline (ELT) to analyze the Brazilian E-Commerce public dataset (Olist). It ingests raw data, ensures data quality, and transforms it into a Star Schema for analytics.
+
+## Architecture
+1.  **Ingestion:** Raw CSV data (Orders, Items, Customers, Products) is ingested from a local Data Lake.
+2.  **Staging:** Data is loaded into PostgreSQL Staging tables (Raw Layer).
+3.  **Data Quality (DQ):** Automated checks ensure staging tables are not empty before processing.
+4.  **Transformation (DWH):**
+    *   **Dimensions:** Products (with English translations), Customers (Unique IDs), and Dates.
+    *   **Facts:** Sales transactions linked to all dimensions.
+5.  **Orchestration:** Apache Airflow manages dependencies, retries, and alerting.
+
+## Key Features
+*   **Backfilling:** The DAG is parameterized to process data day-by-day (`{{ ds }}`). History from 2017-2018 is automatically backfilled.
+*   **SCD Type 2:** User dimension handles history (if implemented) or deduplication.
+*   **Alerting:** Integrated with Telegram to send instant notifications on task failure.
+*   **Idempotency:** The pipeline can be re-run multiple times without creating duplicate data (`ON CONFLICT` logic).
+
+## How to Run
+
+### 1. Prerequisites
+*   Docker & Docker Compose
+*   (Optional) `uv` for local python management.
+
+### 2. Setup Environment
+1.  Clone the repository and switch to the branch:
+    ```bash
+    git checkout sultan-myrzash-final-project
+    ```
+2.  Ensure raw data exists in `./data/raw/` (Olist CSV files).
+3.  Start Docker:
+    ```bash
+    docker-compose up -d --build
+    ```
+
+### 3. Configure Airflow
+1.  Access UI at `http://localhost:8080` (User/Pass: `admin`/`admin`).
+2.  **Connections:** Create `postgres_etl_target_conn` (Host: `postgres-etl-target`, Port: `5432`, User: `etl_user`, Pass: `etl_pass`, DB: `etl_db`).
+3.  **Variables:** Set `telegram_bot_token` and `telegram_chat_id` for alerts.
+
+### 4. Run
+Unpause the `olist_ecommerce_dwh` DAG. It will automatically start backfilling historical data.
+
+## Data Model
+*   **Fact:** `fact_sales` (Granularity: Order Item level)
+*   **Dims:** `dim_products`, `dim_customers`, `dim_date`
+
+
+
+
+
+
+
+
+
+
+
+
 # Airflow ETL Demo Setup
 
 This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
