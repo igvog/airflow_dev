@@ -226,6 +226,7 @@ with DAG(
             population = EXCLUDED.population,
             updated_at = CURRENT_TIMESTAMP;
         """
+        # ON CONFLICT (iso_code) DO UPDATE SET -> iso_code UNIQUE.  без UNIQUE не работает потому что заранее прверятся 
         hook.run(sql)
         logging.info("Populated dim_country")
 
