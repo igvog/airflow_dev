@@ -13,8 +13,9 @@ import os
 import traceback
 
 DATA = "/opt/airflow/data/online_retail_II.csv"
-TELEGRAM_TOKEN = "8365532997:AAG2bVd8CtodV7JKizoKRNTO8z58eIjfhhQ"
-TELEGRAM_CHAT_ID = "993345413"
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 # ===== Logging configuration =====
 AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow")

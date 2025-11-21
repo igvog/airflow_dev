@@ -1,117 +1,143 @@
-# Airflow ETL Demo Setup
+# Airflow ETL Project — Online Retail II Dataset
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+### This Online Retail II data set contains all the transactions occurring for a UK-based and registered, non-store online retail between 01/12/2009 and 09/12/2011.The company mainly sells unique all-occasion gift-ware. Many customers of the company are wholesalers.
 
-## Project Structure
+This guide explains how to set up and run the Airflow environment defined in `docker-compose.yml` for the Online Retail II ETL pipeline.
 
-Ensure your files are arranged as follows:
+---
+
+## Project structure
+
+Ensure your project files are organized like this:
 
 ```
 .
 ├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
+│   └── project_api_to_dwh.py
+├── data/
+│   └── online_retail_II.csv
+├── logs/                # Airflow will create this
+├── plugins/             # Empty, for future use
 ├── docker-compose.yml
 ├── .env
 ├── requirements.txt
 └── README.md
 ```
 
-## Step 1: Update .env File
+---
 
-Before you start, find your local user ID by running this in your terminal:
+## Step 1 — Update `.env`
+
+Check your local user ID and replace the UID placeholder in `.env` to avoid Docker file permission issues:
 
 ```bash
 id -u
 ```
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+Edit `.env` and set your UID (and any other required variables). Optionally add Telegram credentials for notifications:
 
-## Step 2: Start the Environment
+```
+TELEGRAM_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
+```
 
-With Docker Desktop running, open a terminal in the project directory and run:
+Important: add `.env` to `.gitignore` to avoid committing secrets.
+
+---
+
+## Step 2 — Start the Docker environment
+
+With Docker Desktop running, from the project directory run:
 
 ```bash
 docker-compose up -d
 ```
 
 This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
+
+- Pull Postgres and Airflow images
+- Start two Postgres containers (one for Airflow metadata, one for ETL)
+- Build the Airflow image and install dependencies from `requirements.txt`
 - Start the Airflow webserver and scheduler
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+Note: the first run may take several minutes.
 
-## Step 3: Access Airflow
+---
 
-Open your web browser and go to:
+## Step 3 — Access the Airflow UI
 
-**http://localhost:8080**
+Open your browser:
 
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
+http://localhost:8080
 
-## Step 4: Create the Postgres Connection
+---
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
+## Step 4 — Configure Postgres connections in Airflow
 
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
+In the Airflow UI: Admin → Connections → Add (+)
 
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
+Fill in the form (example):
 
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
+| Field               | Value                      | Notes                            |
+|--------------------:|---------------------------:|----------------------------------|
+| Connection Id       | `postgres_etl_target_Balga` | Must match the DAG connection id |
+| Connection Type     | `Postgres`                 |                                  |
+| Host                | `postgres-etl-target-Balga`| Service name in docker-compose   |
+| Schema              | `etl_db`                   | Database name                    |
+| Login               | `etl_Balga`                 | Database username                |
+| Password            | `etl_pass`                 | Database password                |
+| Port                | `5432`                     | Internal Docker network port     |
 
-## Step 5: Run Your ETL DAG
+Click Test (should say "Connection successfully tested") and then Save.
 
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
+If you have a second ETL DB (e.g., `postgres-etl-target-Balga`), repeat with a different Connection Id and host.
 
-## Step 6: Verify the Data
+---
 
-How do you know it worked? Let's connect to the target database and check.
+## Step 5 — Trigger the ETL DAG
 
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
+- In the Airflow UI go to the DAGs dashboard
+- Find `project_api_to_dwh`
+- Click the Play (▶) button to trigger a run
+- Monitor progress in Graph View or Grid View; tasks turn green when successful
 
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
+---
 
-Once connected, run this SQL query:
+## Step 6 — Verify data in Postgres
+
+Use any SQL client (DBeaver, pgAdmin, TablePlus, etc.) to connect to the ETL database.
+
+Connection details (host from host machine):
+
+- Host: `localhost`
+- Port: `5434` (for `postgres-etl-target-Balga`; check your `docker-compose.yml` for exact port)
+- Database: `etl_db`
+- User: `etl_Balga` 
+- Password: `etl_pass`
+
+Example queries:
 
 ```sql
-SELECT * FROM users;
+SELECT * FROM fact_sales LIMIT 10;
+SELECT * FROM dim_customers LIMIT 10;
 ```
 
-You should see the 10 user records from the API! 🎉
+Note: inside the Docker network the Postgres containers use port `5432`; host ports are mapped (e.g., `5433`, `5434`) — check your `docker-compose.yml` for exact mappings.
 
-## Stopping the Environment
+---
 
-To stop all the containers, run:
+## Step 7 — Stop the environment
+
+To stop all containers:
 
 ```bash
 docker-compose down
 ```
 
-To stop and remove the database volumes (deleting all your data), run:
+To stop and remove containers and database volumes (delete all data):
 
 ```bash
 docker-compose down -v
 ```
+
+---
