@@ -4,8 +4,10 @@
 - api_to_dw_star_schema: JSONPlaceholder -> Postgres -> звезда (staging -> dims/fact).
 - olist_to_dw_star_schema: Olist CSV -> Postgres -> звезда (staging -> dims/fact).
 
+Телеграм-алерты (опционально): TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env (вместе с ALERT_EMAILS/SMTP).
+
 ## Olist DAG (olist_to_dw_star_schema)
-- Датасет Olist лежит в data/olist (монтируется как /opt/airflow/data/olist в контейнере). Чтобы перекачать файлы, укажите refresh_data_files=true при запуске DAG.
+- Датасет Olist скачивается в data/olist (монтируется как /opt/airflow/data/olist в контейнере). Чтобы перекачать файлы, передайте refresh_data_files=true при запуске DAG.
 - Параметры: run_date (логическая дата загрузки, по умолчанию 2024-01-01), full_refresh (true по умолчанию), refresh_data_files (false по умолчанию), force_fail (тест алертов).
 - Таблицы: staging (staging_*), затем dim (dim_customers, dim_sellers, dim_products, dim_dates) и факты (fact_order_items, fact_payments) в базе postgres_etl_target.
 - Backfill: Trigger DAG с нужным run_date или airflow dags backfill; при full_refresh=true staging/dim/fact пересоздаются.
@@ -26,6 +28,7 @@
 2) Создать .env:
    cp .env.example .env
    # На Linux/macOS: заменить AIRFLOW_UID на вывод id -u; при необходимости указать ALERT_EMAILS через запятую
+   # Для Telegram: TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID
 
 3) Поднять окружение (Docker Desktop должен быть запущен):
    docker-compose up --build -d
@@ -53,7 +56,7 @@ Postgres витрины: localhost:5433, БД etl_db, пользователь e
 
 ## Алерты и логирование
 - Логи через стандартный Airflow логгер.
-- При фейле таска _alert_on_failure шлёт письмо на ALERT_EMAILS (нужен настроенный smtp_default или другой e-mail backend).
+- _alert_on_failure шлёт письмо на ALERT_EMAILS и сообщение в Telegram (если TELEGRAM_BOT_TOKEN/CHAT_ID заданы).
 
 ## Работа с зависимостями (Poetry)
 В контейнере выполняется poetry install --no-root (см. docker-compose.yaml).
