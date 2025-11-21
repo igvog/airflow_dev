@@ -12,6 +12,7 @@ x-airflow-common: &airflow-common
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/requirements.txt
+    - ./data:/opt/airflow/data
   networks:
     - airflow_network # All services on this network
   depends_on:
@@ -36,6 +37,8 @@ services:
       - POSTGRES_DB=airflow
     volumes:
       - airflow-db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     networks:
       - airflow_network
     healthcheck:
