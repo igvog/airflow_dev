@@ -20,6 +20,8 @@ airflow-docker/
 └── README.md
 ```
 
+ссылка на датасет: https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce
+
 ## Step 1: Update .env File
 
 Before you start, find your local user ID by running this in your terminal:
