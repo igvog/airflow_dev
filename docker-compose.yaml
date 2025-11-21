@@ -1,87 +1,70 @@
----
-# Based on the official Airflow Docker Compose file
-# https://airflow.apache.org/docs/apache-airflow/stable/docker-compose.yaml
 version: '3.8'
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.2-python3.12
-  env_file:
-    - .env
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.9.0}
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW_UID: ${AIRFLOW_UID:-50000}
   volumes:
     - ./dags:/opt/airflow/dags
+    - ./data:/opt/airflow/data
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
-    - ./requirements.txt:/requirements.txt
-  networks:
-    - airflow_network # All services on this network
+  user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
-    - postgres-airflow-db
-  entrypoint: /bin/bash
-  command:
-    - -c
-    - |
-      pip install -r /requirements.txt;
-      airflow db init;
-      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true;
-      (airflow webserver & airflow scheduler)
+    &airflow-common-depends-on
+    postgres_airflow:
+      condition: service_healthy
 
 services:
-  # Database for Airflow Metadata
-  postgres-airflow-db:
+  # 1. Database for Airflow Metadata (служебная БД)
+  postgres_airflow:
     image: postgres:13
-    container_name: postgres-airflow-db
     environment:
-      - POSTGRES_USER=airflow
-      - POSTGRES_PASSWORD=airflow
-      - POSTGRES_DB=airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
     volumes:
-      - airflow-db-data:/var/lib/postgresql/data
-    networks:
-      - airflow_network
+      - postgres_airflow_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 5s
-      timeout: 5s
       retries: 5
+    restart: always
 
-  # ----- ETL TARGET DATABASE -----
-  # This is the separate Postgres DB for our ETL pipeline
-  postgres-etl-target:
+  # 2. Database for Your Data Warehouse (Твоя "боевая" БД)
+  postgres_dwh:
     image: postgres:15
-    container_name: postgres-etl-target
-    ports:
-      - "5433:5432" # Expose on host port 5433 to avoid conflict
+    container_name: kaspi_dwh
     environment:
-      - POSTGRES_USER=etl_user
-      - POSTGRES_PASSWORD=etl_pass
-      - POSTGRES_DB=etl_db
-    volumes:
-      - etl-db-data:/var/lib/postgresql/data
-    networks:
-      - airflow_network
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "etl_user"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # Airflow Webserver and Scheduler (running in one container for simplicity)
-  # For production, you'd split webserver and scheduler into separate services
-  airflow-services:
-    <<: *airflow-common
-    container_name: airflow_services
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: kaspi_lab_db
     ports:
-      - "8080:8080"
+      - "5439:5432" # Проброс порта, чтобы ты мог подключиться через DBeaver с компа
+    volumes:
+      - postgres_dwh_data:/var/lib/postgresql/data
+      - ./data:/data
+    restart: always
+
+  # 3. Airflow Webserver & Scheduler (в одном контейнере для простоты)
+  airflow:
+    <<: *airflow-common
+    container_name: kaspi_airflow
+    command: bash -c "airflow webserver & airflow scheduler"    
+    ports:
+      - "8081:8080"
     healthcheck:
-      test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-webserver.pid ]"]
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
       timeout: 10s
-      retries: 3
+      retries: 5
 
 volumes:
-  airflow-db-data:
-  etl-db-data:
-
-networks:
-  airflow_network:
-    driver: bridge
+  postgres_airflow_data:
+  postgres_dwh_data:
