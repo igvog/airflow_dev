@@ -159,19 +159,19 @@ with DAG(
                     json.dumps(post)
                 )
             )
-        
+
         logging.info(f"Loaded {len(posts_data)} posts into staging_posts")
-    
+
     load_posts = PythonOperator(
         task_id='load_posts_to_staging',
         python_callable=load_posts_to_staging,
     )
-    
+
     def load_users_to_staging(**context):
         """Load users data into staging table"""
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         users_data = context['ti'].xcom_pull(key='users_data', task_ids='fetch_api_data')
-        
+
         for user in users_data:
             insert_query = """
             INSERT INTO staging_users (id, name, username, email, phone, website, address, company, raw_data)

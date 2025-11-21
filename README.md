@@ -4,12 +4,24 @@ This guide walks you through setting up and running the Airflow environment defi
 
 ## Project Structure
 
+**Create inside project a `kaggle_cache` dir.**
+There we will store the kaggle data set.
+
+```
+volumes:
+    - ./kaggle_cache:/opt/airflow/kaggle_cache
+```
+In `docker-compose.yml` we connected the volume with that path,
+where we store the dowloaded dataset by using `kagglehub` library from kaggle
+locally inside `./kaggle_cache`, and `/opt/airflow/kaggle_cache` in the container.
+
 Ensure your files are arranged as follows:
 
 ```
 .
 ├── dags/
 │   └── api_to_postgres_etl.py
+├── kaggle_cache/           (Dataset dir)
 ├── logs/           (Airflow will create this)
 ├── plugins/        (Empty, for future use)
 ├── docker-compose.yml
@@ -78,7 +90,7 @@ This is the most important step for the ETL to work. You need to tell Airflow ho
 ## Step 5: Run Your ETL DAG
 
 1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
+2. Find the `game_info_to_dwh_dag` DAG
 3. Click the **Play** button (▶) on the right to trigger a manual run
 4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
 
@@ -97,10 +109,10 @@ You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to t
 Once connected, run this SQL query:
 
 ```sql
-SELECT * FROM users;
+SELECT * FROM dim_game;
 ```
 
-You should see the 10 user records from the API! 🎉
+You should see the records from the API! 🎉
 
 ## Stopping the Environment
 
@@ -115,15 +127,3 @@ To stop and remove the database volumes (deleting all your data), run:
 ```bash
 docker-compose down -v
 ```
-
-
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-**3. Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-**4. Technical add.work: package manager to UV or poetry, **
-
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
