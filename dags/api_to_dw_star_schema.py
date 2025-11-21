@@ -13,7 +13,6 @@ import requests
 import json
 import logging
 
-
 # Default arguments
 default_args = {
     'owner': 'airflow',
