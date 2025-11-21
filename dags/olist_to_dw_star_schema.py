@@ -48,6 +48,8 @@ ALERT_EMAILS: List[str] = [
     for email in os.getenv("ALERT_EMAILS", "admin@example.com").split(",")
     if email.strip()
 ]
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 DATA_BASE_URL = "https://raw.githubusercontent.com/olist/work-at-olist-data/master/datasets"
 DATA_DIR = Path(os.getenv("OLIST_DATA_DIR", "/opt/airflow/data/olist"))
@@ -142,7 +144,7 @@ STAGING_FILES: Dict[str, Dict[str, List[str]]] = {
 
 
 def _alert_on_failure(context):
-    """Send a short email notification if any task fails."""
+    """Send a short email/Telegram notification if any task fails."""
     dag_id = context["dag"].dag_id
     task_id = context["task_instance"].task_id
     run_id = context["run_id"]
@@ -162,6 +164,19 @@ def _alert_on_failure(context):
         send_email(to=ALERT_EMAILS, subject=subject, html_content=html_content)
     except Exception as exc:  # pragma: no cover - alert must not break DAG
         logger.error("Failed to send failure alert: %s", exc)
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": f"[Airflow][{dag_id}] Task failed: {task_id} (run_id={run_id})\\nLog: {log_url}",
+            }
+            resp = requests.post(url, json=payload, timeout=15)
+            resp.raise_for_status()
+        except Exception as exc:  # pragma: no cover - alert must not break DAG
+            logger.error("Failed to send Telegram alert: %s", exc)
+    else:
+        logger.info("Telegram not configured; skipping Telegram alert")
 
 
 def _resolve_run_date(context) -> pendulum.Date:
