@@ -12,6 +12,7 @@ x-airflow-common: &airflow-common
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/requirements.txt
+    - ./steam_dataset_2025_csv:/steam_dataset_2025_csv
   networks:
     - airflow_network # All services on this network
   depends_on:
@@ -34,6 +35,7 @@ services:
       - POSTGRES_USER=airflow
       - POSTGRES_PASSWORD=airflow
       - POSTGRES_DB=airflow
+      - TZ=Asia/Almaty
     volumes:
       - airflow-db-data:/var/lib/postgresql/data
     networks:
@@ -60,7 +62,7 @@ services:
     networks:
       - airflow_network
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "etl_user"]
+      test: ["CMD", "pg_isready"]
       interval: 5s
       timeout: 5s
       retries: 5
