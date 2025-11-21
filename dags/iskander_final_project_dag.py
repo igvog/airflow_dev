@@ -53,8 +53,8 @@ with DAG(
         'iskander_final_project_dag',
         default_args=default_args,
         description='ETL пайплайн: Датасет → Postgres → Star Schema DW',
-        schedule_interval='0 0 1 * *',
-        start_date=datetime(2016, 9, 1),
+        schedule_interval='@daily',
+        start_date=datetime(2016, 10, 4),
         catchup=True,
         max_active_runs=2,
         max_active_tasks=4,
@@ -744,36 +744,29 @@ with DAG(
 
 
     def populate_fact_orders(**context):
-        """Заполняем final_fact_orders за месяц, соответствующий execution_date."""
+        """Заполняем final_fact_orders за одну бизнес дату execution_date."""
         hook = PostgresHook(postgres_conn_id="postgres_etl_target_conn")
 
         # Airflow 2.x: logical_date = execution_date
-        execution_date = context.get("logical_date") or context["execution_date"]
-        month_start = execution_date.replace(day=1).date()
-        if execution_date.month == 12:
-            month_end = execution_date.replace(
-                year=execution_date.year + 1, month=1, day=1
-            ).date()
-        else:
-            month_end = execution_date.replace(
-                month=execution_date.month + 1, day=1
-            ).date()
-
-        month_start_str = month_start.strftime("%Y-%m-%d")
-        month_end_str = month_end.strftime("%Y-%m-%d")
+        logical_dt = (
+                context.get("data_interval_start")
+                or context.get("logical_date")
+                or context["execution_date"]
+        )
+        target_date = logical_dt.date()
+        target_date_str = target_date.strftime("%Y-%m-%d")
+        date_key = int(target_date.strftime("%Y%m%d"))
 
         logger.info(
-            f"Пересчёт final_fact_orders за период "
-            f"{month_start_str} .. {month_end_str}"
-        )
+            f"Заполнение final_fact_orders за бизнес дату"
+            f" date {target_date_str} (date_key={date_key})")
 
         sql = """
-                -- Удаляем факты за месяц (идемпотентность по месяцу)
+                -- Удаляем факт за конкретный день (идемпотентность по дате)
                 DELETE FROM final_fact_orders
-                WHERE order_purchase_timestamp::date >= %(month_start)s
-                  AND order_purchase_timestamp::date < %(month_end)s;
+                WHERE order_purchase_date_key = %(date_key)s;
 
-                -- Вставляем заново все строки за этот месяц
+                -- Вставляем заново строки факта за этот день
                 INSERT INTO final_fact_orders (
                     order_id,
                     order_item_id,
@@ -798,8 +791,7 @@ with DAG(
                     oi.order_item_id,
                     dc.customer_key,
                     dp.product_key,
-                    TO_CHAR(o.order_purchase_timestamp::date, 'YYYYMMDD')::INTEGER
-                        AS order_purchase_date_key,
+                    %(date_key)s AS order_purchase_date_key,
                     o.order_status,
                     o.order_purchase_timestamp,
                     o.order_approved_at,
@@ -829,22 +821,20 @@ with DAG(
                     ORDER BY order_id, payment_sequential
                 ) pay
                     ON pay.order_id = o.order_id
-                WHERE o.order_purchase_timestamp::date >= %(month_start)s
-                  AND o.order_purchase_timestamp::date < %(month_end)s;
+                WHERE o.order_purchase_timestamp::date = %(target_date)s;
                 """
 
         try:
             hook.run(
                 sql,
                 parameters={
-                    "month_start": month_start_str,
-                    "month_end": month_end_str,
+                    "date_key": date_key,
+                    "target_date": target_date_str,
                 },
             )
             logger.info(
-                f"final_fact_orders пересчитана за период "
-                f"{month_start_str} .. {month_end_str}"
-            )
+                f"Успешное заполнение final_fact_orders за бизнес дату"
+                f" date {target_date_str} (date_key={date_key})")
         except Exception as e:
             logger.exception(f"Ошибка при заполнении final_fact_orders: {e}")
             raise

@@ -1,129 +1,207 @@
-# Airflow ETL Demo Setup
+# Final Project: Airflow + Olist E-commerce DWH
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+Итоговый проект по курсу Data Engineering: DAG в Airflow, который загружает e-commerce датасет Olist в Postgres и строит простую звездообразную схему (DWH).
 
-## Project Structure
+## 1. Описание задачи
 
-Ensure your files are arranged as follows:
+- Взять реальный e-commerce датасет с Kaggle.  
+- Загрузить сырые CSV в Postgres (staging-слой).  
+- Построить схему DWH типа "звезда" с измерениями (dim) и фактом (fact).  
+- Реализовать DAG в Airflow c:
+  - логированием,
+  - обработкой ошибок (try/except),
+  - алертами (email/Telegram),
+  - поддержкой backfill и re-fill,
+  - использованием `execution_date` в качестве бизнес-даты.
 
-```
-.
-├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
-```
+## 2. Используемый датасет
 
-## Step 1: Update .env File
+Источник: Kaggle - **Brazilian E-Commerce Public Dataset by Olist**  
+(подробнее см. по ссылке в README шаблонного репозитория `igvog/airflow_dev`).
 
-Before you start, find your local user ID by running this in your terminal:
+Используемые файлы:
 
-```bash
-id -u
-```
+- `olist_orders_dataset.csv`
+- `olist_order_items_dataset.csv`
+- `olist_products_dataset.csv`
+- `olist_customers_dataset.csv`
+- `olist_order_payments_dataset.csv`
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+Все файлы ожидаются внутри контейнера Airflow по пути:
 
-## Step 2: Start the Environment
+/opt/airflow/dags/data/
 
-With Docker Desktop running, open a terminal in the project directory and run:
+Локально - положить CSV в:
 
-```bash
-docker-compose up -d
-```
+./dags/data/
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
+## 3. Архитектура решения
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+### 3.1. Staging-слой (Postgres)
 
-## Step 3: Access Airflow
+Создаются временные таблицы для сырых CSV:
 
-Open your web browser and go to:
+- `final_staging_orders`
+- `final_staging_order_items`
+- `final_staging_products`
+- `final_staging_customers`
+- `final_staging_order_payments`
 
-**http://localhost:8080**
+Особенности:
 
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
+- Структура близка к CSV + поле `raw_data JSONB` и `loaded_at TIMESTAMP`.
+- Загрузка через `PostgresHook.insert_rows` батчами (`BATCH_SIZE = 5000`).
+- Везде используется `try/except` и логирование через `logging`.
 
-## Step 4: Create the Postgres Connection
+### 3.2. DWH (звездообразная схема)
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
+**Измерения:**
 
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
+- `final_dim_date`  
+  - `date_key` (формат `YYYYMMDD`, PK)  
+  - `full_date`, `year`, `quarter`, `month`, `day`, `day_of_week`, `is_weekend` и т.п.
+- `final_dim_customer`  
+  - `customer_key` (PK, surrogate)  
+  - `customer_id` (business key, UNIQUE)  
+  - `customer_unique_id`, `zip`, `city`, `state`, audit-поля `created_at`, `updated_at`.
+- `final_dim_product`  
+  - `product_key` (PK, surrogate)  
+  - `product_id` (business key, UNIQUE)  
+  - `product_category_name`, длины названия/описания, количество фото, размеры/вес.
 
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
+**Факт:**
 
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
+- `final_fact_orders`  
+  - Grain: **строка заказа** (`order_id` + `order_item_id`).  
+  - Ключи:
+    - `order_item_key` - surrogate PK,
+    - `customer_key` → `final_dim_customer`,
+    - `product_key` → `final_dim_product`,
+    - `order_purchase_date_key` → `final_dim_date`.
+  - Поля:
+    - из orders: статус, даты покупки/доставки/оценки,
+    - из order_items: `price`, `freight_value`, `shipping_limit_date`,
+    - из payments: тип оплаты, количество платежей, `payment_value`,
+    - `load_datetime` для аудита.
+  - Уникальность строки факта:
+    - `UNIQUE (order_id, order_item_id)`.
 
-## Step 5: Run Your ETL DAG
+## 4. DAG в Airflow
 
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
+**Файл:** `dags/iskander_final_project_dag.py`  
+**DAG id:** `iskander_final_project_dag`  
+**Расписание:** `@daily`  
+**start_date:** `2016-10-04` (под диапазон дат Olist)  
+**catchup:** `True` (поддержка backfill)
 
-## Step 6: Verify the Data
+Основные задачи:
 
-How do you know it worked? Let's connect to the target database and check.
+1. `create_staging_tables`  
+   - Дропает и создаёт `final_staging_*` таблицы.
 
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
+2. `load_orders_to_staging`  
+3. `load_order_items_to_staging`  
+4. `load_products_to_staging`  
+5. `load_customers_to_staging`  
+6. `load_payments_to_staging`  
+   - Читают CSV через `csv.DictReader`.
+   - Батчевые вставки в staging, логируют количество строк.
+   - Обрабатывают пустые значения (`check_null_values`).
 
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
+7. `create_dw_schema`  
+   - Дропает и пересоздаёт `final_dim_date`, `final_dim_customer`, `final_dim_product`, `final_fact_orders`.
+   - Создаёт PK/FK и индексы для факта.
 
-Once connected, run this SQL query:
+8. `populate_dim_date`  
+   - Заполняет календарь `final_dim_date` на диапазон `2016-01-01` … `2018-12-31`
+     через `generate_series`.
+   - `ON CONFLICT (date_key) DO NOTHING` - безопасный повторный запуск.
 
-```sql
-SELECT * FROM users;
-```
+9. `populate_dim_customer`  
+   - Загружает уникальных клиентов из `final_staging_customers`.  
+   - `ON CONFLICT (customer_id) DO UPDATE` - upsert, без дублей.
 
-You should see the 10 user records from the API! 🎉
+10. `populate_dim_product`  
+    - Аналогично для товаров из `final_staging_products`.  
 
-## Stopping the Environment
+11. `populate_fact_orders`  
+    - Определяет бизнес-дату:
+      - берётся `data_interval_start` / `execution_date` DAG’а,
+      - вычисляется `target_date` и `date_key = YYYYMMDD`.
+    - Логика re-fill:
+      - сначала `DELETE FROM final_fact_orders WHERE order_purchase_date_key = :date_key`,
+      - затем вставка всех строк факта за этот день из staging + dim’ов.
+    - Идемпотентность по дате: повторный прогон за одну и ту же дату не создаёт дублей.
 
-To stop all the containers, run:
+12. `alert_email_on_failure`  
+    - `EmailOperator` с `trigger_rule="one_failed"`.
+    - Отправляет письмо при падении любого из основных тасков.
 
-```bash
-docker-compose down
-```
+13. `alert_telegram_on_failure` (опционально)  
+    - `SimpleHttpOperator` → Telegram Bot API.  
+    - Отправляет сообщение в чат при ошибке DAG.
 
-To stop and remove the database volumes (deleting all your data), run:
+## 5. Поднятие окружения
 
-```bash
-docker-compose down -v
-```
+Порядок поднятия Docker-окружения, настройки Airflow и Postgres - как в README шаблонного репозитория `igvog/airflow_dev`.
 
+В рамках этого проекта дополнительно требуется только:
 
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
+1. Локально положить CSV-файлы Olist в `./dags/data/`.  
+2. Настроить email-alerting (или отключить его):
 
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
+   - В Airflow UI (Admin → Variables) создать переменную:
+     - `ALERT_EMAIL` = `sedinkar@gmail.com` (или другой адрес).
+   - В Admin → Connections настроить SMTP (`smtp_default`) с вашим app-паролем.
+
+3. (Опционально) Настроить Telegram-алерты:
+
+   - В Admin → Connections:
+     - `telegram_api` - HTTP, host: `https://api.telegram.org`.
+   - В Admin → Variables:
+     - `TELEGRAM_BOT_TOKEN` - токен бота от BotFather.
+     - `TELEGRAM_CHAT_ID` - id чата/группы для уведомлений.
+
+Если алерты не нужны, можно:
+
+- в `default_args` поставить `email_on_failure=False`,  
+- или закомментировать таски `alert_email_on_failure` / `alert_telegram_on_failure`  
+  и соответствующие зависимости.
+
+## 6. Backfill и запуск на любую дату
+
+- DAG настроен на `@daily` и `catchup=True`:  
+  при включении можно прогнать исторические даты в диапазоне от `start_date` до текущей.
+
+- Для запуска за конкретную дату (например, `2017-05-01`):
+  - в Airflow Web UI создать manual run с `execution_date = 2017-05-01`,
+  - DAG возьмёт эту дату как бизнес-день,
+  - `populate_fact_orders` пересчитает факт только за этот день.
+
+- Благодаря `DELETE ... WHERE order_purchase_date_key = :date_key`  
+  перед вставкой данные за день всегда перезаписываются и не дублируются.
+
+## 7. Проверка результата
+
+Примеры запросов в целевой БД (`etl_db`):
+
+SELECT COUNT(*) FROM final_dim_date;
+SELECT COUNT(*) FROM final_dim_customer;
+SELECT COUNT(*) FROM final_dim_product;
+
+SELECT COUNT(*) FROM final_fact_orders;
+
+SELECT
+    d.year,
+    d.month,
+    SUM(f.price + f.freight_value) AS gross_revenue
+FROM final_fact_orders f
+JOIN final_dim_date d
+  ON d.date_key = f.order_purchase_date_key
+GROUP BY d.year, d.month
+ORDER BY d.year, d.month;
+
+После успешного прогона DAG’а:
+
+- В Airflow UI можно показать граф зависимостей и статус задач.  
+- В Postgres - скриншоты таблиц `final_dim_*` и `final_fact_orders` с данными.
