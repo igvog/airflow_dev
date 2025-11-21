@@ -1,129 +1,192 @@
-# Airflow ETL Demo Setup
+# Currency Aggregator ETL – Airflow Project
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+## 1. Описание проекта
 
-## Project Structure
+Проект агрегирует курсы валют из трёх источников:
 
-Ensure your files are arranged as follows:
+* **Frankfurter API**
+* **CurrencyAPI.net**
+* **NBK RSS**
+
+Данные собираются, нормализуются и сохраняются в Postgres в виде **dim/fact таблиц**.
+Реализовано обнаружение аномалий и отправка уведомлений по Email и Telegram.
+
+**Цель проекта:** автоматизация сбора и обработки валютных курсов, возможность работы с историческими данными через backfill, удобное логирование и контроль аномалий.
+
+Проект построен с использованием:
+
+* **Airflow** – для оркестрации ETL;
+* **PostgreSQL** – как целевая база данных;
+* **Docker & Docker Compose** – для изоляции и быстрого запуска;
+* **Poetry** – для управления зависимостями Python.
+
+---
+
+## 2. Структура проекта
 
 ```
 .
 ├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
+│   └── currency_aggregator_etl.py    # основной DAG
+├── logs/                             # логи Airflow
+│   ├── scheduler/
+│   ├── webserver/
+│   └── task_logs/
+├── plugins/                          # плагины Airflow (пусто)
+├── docker-compose.yml                # конфигурация Docker и Airflow
+├── .env                              # переменные окружения
+├── pyproject.toml                     # конфигурация Poetry
+├── poetry.lock                        # lock-файл зависимостей
+├── README.md                         # эта инструкция
+└── requirements.txt                  # зависимости Python (для Docker build)
 ```
 
-## Step 1: Update .env File
+---
 
-Before you start, find your local user ID by running this in your terminal:
+## 3. Настройка и запуск проекта
+
+### 3.1 Подготовка
+
+1. Убедитесь, что установлены **Docker**, **Docker Compose** и **Poetry**.
+2. Клонируйте репозиторий и перейдите в папку проекта:
 
 ```bash
-id -u
+git clone <URL репозитория>
+cd airflow_dev
 ```
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+3. Настройте `.env` файл:
 
-## Step 2: Start the Environment
+```env
+AIRFLOW_UID=1000   # замените на ваш локальный UID (id -u)
+ALERT_EMAIL=youremail@example.com
+TG_TOKEN=<ваш_telegram_bot_token>
+TG_CHAT=<ваш_chat_id>
+```
 
-With Docker Desktop running, open a terminal in the project directory and run:
+4. Создайте папки для логов:
+
+```powershell
+mkdir logs
+mkdir logs\scheduler
+mkdir logs\webserver
+mkdir logs\task_logs
+```
+
+5. Установите зависимости через **Poetry** (локально, если нужно):
+
+```bash
+poetry install
+```
+
+---
+
+### 3.2 Запуск контейнеров
 
 ```bash
 docker-compose up -d
 ```
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
+* Контейнеры: Postgres для Airflow, Postgres для ETL, Airflow webserver + scheduler.
+* После запуска в Airflow UI можно создавать DAG, проверять логи и запускать задачи.
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+Откройте Airflow UI:
 
-## Step 3: Access Airflow
-
-Open your web browser and go to:
-
-**http://localhost:8080**
-
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
-
-## Step 4: Create the Postgres Connection
-
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
-
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
-
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
-
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
-
-## Step 5: Run Your ETL DAG
-
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
-
-## Step 6: Verify the Data
-
-How do you know it worked? Let's connect to the target database and check.
-
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
-
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
-
-Once connected, run this SQL query:
-
-```sql
-SELECT * FROM users;
+```
+http://localhost:8080
 ```
 
-You should see the 10 user records from the API! 🎉
+Логин: `admin`
+Пароль: `admin`
 
-## Stopping the Environment
+---
 
-To stop all the containers, run:
+### 3.3 Создание подключения к Postgres ETL
+
+1. В Airflow UI → **Admin → Connections → +**
+2. Настройте так:
+
+| Поле      | Значение                 |
+| --------- | ------------------------ |
+| Conn Id   | postgres_etl_target_conn |
+| Conn Type | Postgres                 |
+| Host      | postgres-etl-target      |
+| Schema    | etl_db                   |
+| Login     | etl_user                 |
+| Password  | etl_pass                 |
+| Port      | 5432                     |
+
+3. Нажмите **Test**, должно быть "Connection successfully tested."
+
+---
+
+### 3.4 Запуск DAG
+
+* **Ручной запуск:**
+  Airflow UI → DAGs → `currency_aggregator_etl` → Play ▶
+
+* **Backfill / Re-run для исторических данных:**
+
+```bash
+docker exec -it airflow_services airflow dags backfill currency_aggregator_etl -s 2024-01-01 -e 2024-01-02
+```
+
+* **Проверка таблиц в Postgres:**
+
+```sql
+SELECT * FROM dim_api_source;
+
+SELECT * FROM dim_currency;
+
+SELECT  * FROM fact_alerts_log;
+
+SELECT * FROM fact_crypto_rate;
+
+SELECT  * FROM  fact_exchange_rate;
+
+SELECT  * FROM  fact_daily_stats;
+```
+
+---
+
+### 3.5 Логи
+
+* Задачи → `logs/task_logs/<dag_id>/<task_id>/`
+* Scheduler → `logs/scheduler/`
+* Webserver → `logs/webserver/`
+
+Все задачи используют `logging.info()` и `logging.warning()`.
+
+---
+
+### 3.6 Остановка проекта
 
 ```bash
 docker-compose down
 ```
 
-To stop and remove the database volumes (deleting all your data), run:
+Для удаления данных БД:
 
 ```bash
 docker-compose down -v
 ```
 
+---
 
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
+## 4. Особенности реализации
 
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
+* DAG параметризуется через `dag_run.conf`, можно задать `target_date`.
+* Настроен **alerting** через Email и Telegram.
+* Реализован **backfill / re-fill** для исторических данных.
+* Используется **Poetry** для управления зависимостями.
+* Логи задач, scheduler и webserver сохраняются в локальные папки для удобного мониторинга.
+* Таблицы **dim/fact** создаются автоматически через PythonOperators при первом запуске.
+
+---
+
+### 5. Результат работы
+
+* В Airflow UI виден DAG с зелёными задачами при успешном прогоне.
+* В базе данных созданы таблицы `dim_currency`, `dim_api_source`, `fact_exchange_rate`, `fact_daily_stats`, `fact_alerts_log`,`fact_crypto_rate`
+* Данные загружены и агрегированы, аномалии выявляются и отправляются в виде уведомлений.
+---
