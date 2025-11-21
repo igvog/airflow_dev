@@ -28,6 +28,8 @@ Ensure your files are arranged as follows:
 
 ```
 
+**ENSURE YOU HAVE SEPARATE POSTGRES DB RUNNING FOR STORING THE DATA**
+
 ## Step 1: SETUP Environment Variables
 
 Create a .env file with the following:
@@ -66,6 +68,10 @@ Clone the API folder and build the Docker image:
 Test the API at:
 **http://localhost:8000**
 
+### You should by now have three separate containers running: postgres db, api server and airflow from this docker-compose.yaml
+
+![alt text](image-1.png)
+
 ### STEP 4: CONNECTING POSTGRES to AIRFLOW
 
 Connect your Postgres container to the Airflow network:
@@ -89,7 +95,7 @@ This is the most important step for the ETL to work. You need to tell Airflow ho
 
 1. In the Airflow UI, go to **Admin → Connections**
 2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
+3. Fill in the form with the credentials of your database:
 
    | Field               | Value                      | Notes                                                              |
    | ------------------- | -------------------------- | ------------------------------------------------------------------ |
@@ -100,6 +106,8 @@ This is the most important step for the ETL to work. You need to tell Airflow ho
    | **Login**           | `etl_user`                 | From the `postgres-etl-target` environment variables               |
    | **Password**        | `etl_pass`                 | From the `postgres-etl-target` environment variables               |
    | **Port**            | `5432`                     | This is the port inside the Docker network, not the 5433 host port |
+
+**-> This is example**
 
 4. Click **Test**. It should show "Connection successfully tested."
 5. Click **Save**.
