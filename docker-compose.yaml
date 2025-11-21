@@ -4,7 +4,8 @@
 version: '3.8'
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.2-python3.12
+  #image: apache/airflow:2.9.2-python3.12
+  build: .
   env_file:
     - .env
   volumes:
@@ -12,6 +13,7 @@ x-airflow-common: &airflow-common
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/requirements.txt
+    - ./data:/opt/airflow/data
   networks:
     - airflow_network # All services on this network
   depends_on:
