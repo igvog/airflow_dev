@@ -1,45 +1,58 @@
 # Final Project: Airflow + Olist E-commerce DWH
 
-Итоговый проект по курсу Data Engineering: DAG в Airflow, который загружает e-commerce датасет Olist в Postgres и строит простую звездообразную схему (DWH).
+Итоговый проект по курсу Data Engineering: DAG в Airflow, который загружает e-commerce датасет Olist в Postgres и строит звездообразную схему (DWH) вокруг факта заказов.
 
-## 1. Описание задачи
+## 1. Постановка задачи
 
-- Взять реальный e-commerce датасет с Kaggle.  
-- Загрузить сырые CSV в Postgres (staging-слой).  
-- Построить схему DWH типа "звезда" с измерениями (dim) и фактом (fact).  
-- Реализовать DAG в Airflow c:
+Необходимо:
+
+- Взять реальный e-commerce датасет с Kaggle.
+- Загрузить сырые CSV в Postgres (staging-слой).
+- Построить DWH-схему типа «звезда» с измерениями (dim) и фактом (fact).
+- Реализовать DAG в Airflow с:
   - логированием,
   - обработкой ошибок (try/except),
-  - алертами (email/Telegram),
-  - поддержкой backfill и re-fill,
-  - использованием `execution_date` в качестве бизнес-даты.
+  - алертами (Telegram),
+  - поддержкой backfill и re-fill по дате,
+  - использованием `execution_date` как бизнес-даты.
+
+Базовый шаблон окружения и Docker-конфигурация взяты из репозитория `igvog/airflow_dev`.
 
 ## 2. Используемый датасет
 
 Источник: Kaggle - **Brazilian E-Commerce Public Dataset by Olist**  
-(подробнее см. по ссылке в README шаблонного репозитория `igvog/airflow_dev`).
 
-Используемые файлы:
+Датасет включает много таблиц. В рамках проекта используется подмножество, непосредственно связанное с фактом заказов:
 
-- `olist_orders_dataset.csv`
-- `olist_order_items_dataset.csv`
-- `olist_products_dataset.csv`
-- `olist_customers_dataset.csv`
-- `olist_order_payments_dataset.csv`
+- `olist_orders_dataset.csv` - заказы (ядро факта),
+- `olist_order_items_dataset.csv` - позиции заказов (order lines),
+- `olist_products_dataset.csv` - товары,
+- `olist_customers_dataset.csv` - покупатели,
+- `olist_order_payments_dataset.csv` - платежи.
 
-Все файлы ожидаются внутри контейнера Airflow по пути:
+Остальные таблицы (например, продавцы, отзывы, геолокация и т.д.) в этот DWH *специально не включались*, чтобы сфокусироваться на витрине продаж вокруг центра фактов - заказов.
 
-/opt/airflow/dags/data/
+### Размещение файлов
 
-Локально - положить CSV в:
+Локально CSV-файлы нужно положить в каталог:
 
+```text
 ./dags/data/
+```
+
+В docker-compose эта папка монтируется в контейнер Airflow как:
+
+```text
+/opt/airflow/dags/data
+```
+
+Именно отсюда DAG читает файлы (`DATA_DIR = "/opt/airflow/dags/data"`).
 
 ## 3. Архитектура решения
 
 ### 3.1. Staging-слой (Postgres)
 
-Создаются временные таблицы для сырых CSV:
+Создаются промежуточные таблицы (staging) в базе `etl_db` (контейнер `postgres-etl-target`):
 
 - `final_staging_orders`
 - `final_staging_order_items`
@@ -47,150 +60,325 @@
 - `final_staging_customers`
 - `final_staging_order_payments`
 
+Структура таблиц близка к исходным CSV + технические поля:
+
+- `raw_data JSONB` - полный исходный ряд в JSON-формате,
+- `loaded_at TIMESTAMP` - момент загрузки.
+
+Загрузка реализована отдельными Python-задачами:
+
+- `load_orders_to_staging`
+- `load_order_items_to_staging`
+- `load_products_to_staging`
+- `load_customers_to_staging`
+- `load_payments_to_staging`
+
 Особенности:
 
-- Структура близка к CSV + поле `raw_data JSONB` и `loaded_at TIMESTAMP`.
-- Загрузка через `PostgresHook.insert_rows` батчами (`BATCH_SIZE = 5000`).
-- Везде используется `try/except` и логирование через `logging`.
+- чтение через `csv.DictReader`,
+- батчевые вставки в Postgres через `PostgresHook.insert_rows` (`BATCH_SIZE = 5000`),
+- обработка пустых значений (`check_null_values` → `NULL`),
+- `try/except` вокруг чтения и вставки, логирование ошибок через `logging`.
+
+Точка входа: `create_staging_tables` - дропает и пересоздаёт все `final_staging_*`.
 
 ### 3.2. DWH (звездообразная схема)
 
+Схема строится в той же базе `etl_db`.
+
 **Измерения:**
 
-- `final_dim_date`  
-  - `date_key` (формат `YYYYMMDD`, PK)  
-  - `full_date`, `year`, `quarter`, `month`, `day`, `day_of_week`, `is_weekend` и т.п.
-- `final_dim_customer`  
-  - `customer_key` (PK, surrogate)  
-  - `customer_id` (business key, UNIQUE)  
-  - `customer_unique_id`, `zip`, `city`, `state`, audit-поля `created_at`, `updated_at`.
-- `final_dim_product`  
-  - `product_key` (PK, surrogate)  
-  - `product_id` (business key, UNIQUE)  
-  - `product_category_name`, длины названия/описания, количество фото, размеры/вес.
+1. `final_dim_date`
+   - `date_key` (PK, формат `YYYYMMDD`),
+   - `full_date`, `year`, `quarter`, `month`, `month_name`,
+   - `day`, `day_of_week`, `day_name`, `is_weekend`.
+   - Заполняется из `generate_series('2016-01-01' .. '2018-12-31')` с `ON CONFLICT (date_key) DO NOTHING`.
+
+2. `final_dim_customer`
+   - `customer_key` (PK, surrogate),
+   - `customer_id` (business key, `UNIQUE`),
+   - `customer_unique_id`, `customer_zip_code_prefix`, `customer_city`, `customer_state`,
+   - `created_at`, `updated_at`.
+   - Заполняется из `final_staging_customers` с `ON CONFLICT (customer_id) DO UPDATE` (upsert, без дублей).
+
+3. `final_dim_product`
+   - `product_key` (PK, surrogate),
+   - `product_id` (business key, `UNIQUE`),
+   - `product_category_name`,
+   - `product_name_lenght`, `product_description_lenght`, `product_photos_qty`,
+   - `product_weight_g`, `product_length_cm`, `product_height_cm`, `product_width_cm`,
+   - `created_at`, `updated_at`.
+   - Заполняется из `final_staging_products` с `ON CONFLICT (product_id) DO UPDATE`.
 
 **Факт:**
 
-- `final_fact_orders`  
-  - Grain: **строка заказа** (`order_id` + `order_item_id`).  
-  - Ключи:
-    - `order_item_key` - surrogate PK,
-    - `customer_key` → `final_dim_customer`,
-    - `product_key` → `final_dim_product`,
-    - `order_purchase_date_key` → `final_dim_date`.
-  - Поля:
-    - из orders: статус, даты покупки/доставки/оценки,
-    - из order_items: `price`, `freight_value`, `shipping_limit_date`,
-    - из payments: тип оплаты, количество платежей, `payment_value`,
-    - `load_datetime` для аудита.
-  - Уникальность строки факта:
-    - `UNIQUE (order_id, order_item_id)`.
+`final_fact_orders` - таблица фактов по строкам заказов.
 
-## 4. DAG в Airflow
+- Grain: **строка заказа** (`order_id` + `order_item_id`).
+- Ключи:
+  - `order_item_key` - surrogate PK,
+  - `customer_key` → `final_dim_customer`,
+  - `product_key` → `final_dim_product`,
+  - `order_purchase_date_key` → `final_dim_date`.
+- Поля:
+  - из orders: статус, даты покупки/подтверждения/доставки, ETA,
+  - из order_items: `shipping_limit_date`, `price`, `freight_value`,
+  - из payments: `payment_type`, `payment_installments`, `payment_value`,
+  - `load_datetime` - время загрузки строки факта.
+- Уникальность строки:
+  - `UNIQUE (order_id, order_item_id)`.
 
-**Файл:** `dags/iskander_final_project_dag.py`  
-**DAG id:** `iskander_final_project_dag`  
-**Расписание:** `@daily`  
-**start_date:** `2016-10-04` (под диапазон дат Olist)  
-**catchup:** `True` (поддержка backfill)
+Индексы:
 
-Основные задачи:
+- по `customer_key`, `product_key`, `order_purchase_date_key`, `order_id`
+  для типовых аналитических запросов.
 
-1. `create_staging_tables`  
-   - Дропает и создаёт `final_staging_*` таблицы.
+### 3.3. DAG и планировщик
 
-2. `load_orders_to_staging`  
-3. `load_order_items_to_staging`  
-4. `load_products_to_staging`  
-5. `load_customers_to_staging`  
-6. `load_payments_to_staging`  
-   - Читают CSV через `csv.DictReader`.
-   - Батчевые вставки в staging, логируют количество строк.
-   - Обрабатывают пустые значения (`check_null_values`).
+**Файл DAG:**  
+`dags/iskander_final_project_dag.py`
 
-7. `create_dw_schema`  
-   - Дропает и пересоздаёт `final_dim_date`, `final_dim_customer`, `final_dim_product`, `final_fact_orders`.
-   - Создаёт PK/FK и индексы для факта.
+**DAG id:**  
+`iskander_final_project_dag`
 
-8. `populate_dim_date`  
-   - Заполняет календарь `final_dim_date` на диапазон `2016-01-01` … `2018-12-31`
-     через `generate_series`.
-   - `ON CONFLICT (date_key) DO NOTHING` - безопасный повторный запуск.
+**Подключение к целевой БД:**  
+`postgres_etl_target_conn` (Postgres, БД `etl_db`, контейнер `postgres-etl-target`).
 
-9. `populate_dim_customer`  
-   - Загружает уникальных клиентов из `final_staging_customers`.  
-   - `ON CONFLICT (customer_id) DO UPDATE` - upsert, без дублей.
+**Основные настройки DAG:**
 
-10. `populate_dim_product`  
-    - Аналогично для товаров из `final_staging_products`.  
+- `schedule_interval='@daily'` - ежедневный запуск,
+- `start_date=datetime(2017, 1, 1)` - начало бизнес-календаря
+- `catchup=True` - поддержка backfill по историческим датам,
+- `max_active_runs=1` - избегаем гонок при пересоздании/обновлении таблиц,
+- `max_active_tasks=4` - ограничение параллелизма.
 
-11. `populate_fact_orders`  
-    - Определяет бизнес-дату:
-      - берётся `data_interval_start` / `execution_date` DAG’а,
-      - вычисляется `target_date` и `date_key = YYYYMMDD`.
-    - Логика re-fill:
-      - сначала `DELETE FROM final_fact_orders WHERE order_purchase_date_key = :date_key`,
-      - затем вставка всех строк факта за этот день из staging + dim’ов.
-    - Идемпотентность по дате: повторный прогон за одну и ту же дату не создаёт дублей.
+Основные группы задач:
 
-12. `alert_email_on_failure`  
-    - `EmailOperator` с `trigger_rule="one_failed"`.
-    - Отправляет письмо при падении любого из основных тасков.
+1. Staging:
+   - `create_staging_tables`
+   - `load_orders_to_staging`
+   - `load_order_items_to_staging`
+   - `load_products_to_staging`
+   - `load_customers_to_staging`
+   - `load_payments_to_staging`
 
-13. `alert_telegram_on_failure` (опционально)  
-    - `SimpleHttpOperator` → Telegram Bot API.  
-    - Отправляет сообщение в чат при ошибке DAG.
+2. DWH:
+   - `create_dw_schema` - `CREATE TABLE IF NOT EXISTS` для всех dim/fact.
+   - `populate_dim_date`
+   - `populate_dim_customer`
+   - `populate_dim_product`
+   - `populate_fact_orders`
 
-## 5. Поднятие окружения
+Связи:
 
-Порядок поднятия Docker-окружения, настройки Airflow и Postgres - как в README шаблонного репозитория `igvog/airflow_dev`.
+- Все `load_*` зависят от `create_staging_tables`.
+- `create_dw_schema` зависит от всех `load_*`.
+- `populate_dim_date` зависит от `create_dw_schema`.
+- `populate_dim_customer` зависит от `create_dw_schema` и `load_customers`.
+- `populate_dim_product` зависит от `create_dw_schema` и `load_products`.
+- `populate_fact_orders` зависит от:
+  - `populate_dim_date`,
+  - `populate_dim_customer`,
+  - `populate_dim_product`,
+  - `load_orders`, `load_order_items`, `load_payments`.
 
-В рамках этого проекта дополнительно требуется только:
+### 3.4. Backfill и re-fill (идемпотентность по дате)
 
-1. Локально положить CSV-файлы Olist в `./dags/data/`.  
-2. Настроить email-alerting (или отключить его):
+Задача `populate_fact_orders`:
 
-   - В Airflow UI (Admin → Variables) создать переменную:
-     - `ALERT_EMAIL` = `sedinkar@gmail.com` (или другой адрес).
-   - В Admin → Connections настроить SMTP (`smtp_default`) с вашим app-паролем.
+1. Определяет бизнес-день:
 
-3. (Опционально) Настроить Telegram-алерты:
+   ```python
+   logical_dt = (
+       context.get("data_interval_start")
+       or context.get("logical_date")
+       or context["execution_date"]
+   )
+   target_date = logical_dt.date()
+   target_date_str = target_date.strftime("%Y-%m-%d")
+   date_key = int(target_date.strftime("%Y%m%d"))
+   ```
 
-   - В Admin → Connections:
-     - `telegram_api` - HTTP, host: `https://api.telegram.org`.
-   - В Admin → Variables:
-     - `TELEGRAM_BOT_TOKEN` - токен бота от BotFather.
-     - `TELEGRAM_CHAT_ID` - id чата/группы для уведомлений.
+2. Перед вставкой факта делает очистку за этот день:
 
-Если алерты не нужны, можно:
+   ```sql
+   DELETE FROM final_fact_orders
+   WHERE order_purchase_date_key = %(date_key)s;
+   ```
 
-- в `default_args` поставить `email_on_failure=False`,  
-- или закомментировать таски `alert_email_on_failure` / `alert_telegram_on_failure`  
-  и соответствующие зависимости.
+3. Затем вставляет все строки факта за этот день, собранные из staging и измерений:
 
-## 6. Backfill и запуск на любую дату
+   ```sql
+   WHERE o.order_purchase_timestamp::date = %(target_date)s;
+   ```
 
-- DAG настроен на `@daily` и `catchup=True`:  
-  при включении можно прогнать исторические даты в диапазоне от `start_date` до текущей.
+Это обеспечивает:
 
-- Для запуска за конкретную дату (например, `2017-05-01`):
-  - в Airflow Web UI создать manual run с `execution_date = 2017-05-01`,
-  - DAG возьмёт эту дату как бизнес-день,
-  - `populate_fact_orders` пересчитает факт только за этот день.
+- **backfill** - при включённом `catchup=True` можно прогнать весь период с 2017-01-01 до текущей даты;
+- **re-fill** - повторный запуск DAG за ту же дату перезапишет данные за день без дублей.
 
-- Благодаря `DELETE ... WHERE order_purchase_date_key = :date_key`  
-  перед вставкой данные за день всегда перезаписываются и не дублируются.
+## 4. Алерты: только Telegram
 
-## 7. Проверка результата
+Изначально планировались email-алерты через `EmailOperator`, но от них отказался:
 
-Примеры запросов в целевой БД (`etl_db`):
+- для локального окружения требуется настраивать SMTP, порты, доступы к внешнему почтовому серверу;
+- это добавляет лишнюю инфраструктурную сложность и не укладывается в сроки итогового проекта.
 
+В результате:
+
+- **email-алерты отключены** (нет `EmailOperator`, `email_on_failure=False`),
+- оставлены только уведомления в Telegram через `SimpleHttpOperator` и Telegram Bot API.
+
+### Настройка Telegram-алертов
+
+В DAG добавлена задача:
+
+```python
+alert_telegram = SimpleHttpOperator(
+    task_id="alert_telegram_on_failure",
+    http_conn_id="telegram_api",
+    endpoint="bot{{ var.value.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    method="POST",
+    headers={"Content-Type": "application/json"},
+    data=json.dumps(
+        {
+            "chat_id": "{{ var.value.TELEGRAM_CHAT_ID }}",
+            "text": "DAG {{ dag.dag_id }} failed on {{ ds }} (run_id={{ run_id }})",
+        }
+    ),
+    trigger_rule="one_failed",
+)
+```
+
+Алерт срабатывает, если любой из основных тасков DAG упал (`trigger_rule="one_failed"`).
+
+**Что требуется настроить в Airflow:**
+
+1. **Connection** (Admin → Connections):
+
+   - Conn Id: `telegram_api`
+   - Conn Type: `HTTP`
+   - Host: `https://api.telegram.org`
+
+2. **Variables** (Admin → Variables):
+
+   - `TELEGRAM_BOT_TOKEN` - токен бота (от BotFather),
+   - `TELEGRAM_CHAT_ID` - id чата или группы, куда слать уведомления.
+
+## 5. Пакетный менеджер: pyproject.toml и uv
+
+Для фиксации зависимостей и в соответствии с требованием «Technical add.work: package manager to UV or poetry» используется `pyproject.toml` с секцией `[tool.uv]`.
+
+Пример содержимого:
+
+```toml
+[project]
+name = "airflow-dev"
+version = "0.1.0"
+description = "Capstone final project: Airflow + Olist data source + DWH"
+requires-python = ">=3.10"
+
+dependencies = [
+    "apache-airflow",
+    "apache-airflow-providers-postgres",
+    "apache-airflow-providers-http",  # нужен для SimpleHttpOperator (Telegram)
+]
+
+[tool.uv]
+```
+
+Также есть `requirements.txt`, который используется в docker-compose для установки зависимостей внутри контейнера Airflow:
+
+```yaml
+- ./requirements.txt:/requirements.txt
+...
+command:
+  - -c
+  - |
+    pip install -r /requirements.txt;
+    airflow db init;
+    airflow users create ...;
+    (airflow webserver & airflow scheduler)
+```
+
+Таким образом:
+
+- зависимости явно задекларированы и для uv (`pyproject.toml`),
+- и для Docker-окружения (`requirements.txt`).
+
+## 6. Запуск окружения и DAG
+
+### 6.1. Docker Compose
+
+Запуск стандартный (аналогично README из `igvog/airflow_dev`):
+
+```bash
+docker-compose up -d
+```
+
+Основные сервисы:
+
+- `postgres-airflow-db` - БД метаданных Airflow,
+- `postgres-etl-target` - целевая БД `etl_db` для DWH,
+- `airflow-services` - webserver + scheduler Airflow.
+
+### 6.2. Подготовка данных
+
+1. Скачать CSV-файлы Olist (из Kaggle).
+2. Положить их локально в:
+
+   ```text
+   ./dags/data/
+   ```
+
+3. Убедиться, что в контейнере по пути `/opt/airflow/dags/data` файлы видны.
+
+### 6.3. Настройка Airflow
+
+1. Создать Connection `postgres_etl_target_conn` (если не создан автоматически):
+
+   - Conn Type: `Postgres`
+   - Host: `postgres-etl-target`
+   - Port: `5432`
+   - Schema: `etl_db`
+   - Login: `etl_user`
+   - Password: `etl_pass`
+
+2. По желанию - настроить Telegram-алерты (см. раздел 4).
+
+### 6.4. Запуск DAG
+
+1. В Airflow UI включить DAG `iskander_final_project_dag`.
+2. Для проверки можно сначала запустить вручную за конкретную дату, например:
+
+   - `execution_date = 2017-10-02` (дата, где в датасете точно есть заказы).
+
+3. При включённом `catchup=True` Airflow может автоматически прогнать весь диапазон от `start_date` до текущей даты.
+
+## 7. Проверка результатов
+
+Примеры запросов в БД `etl_db`:
+
+```sql
+-- Проверка, что staging заполнен
+SELECT COUNT(*) FROM final_staging_orders;
+SELECT COUNT(*) FROM final_staging_order_items;
+SELECT COUNT(*) FROM final_staging_customers;
+SELECT COUNT(*) FROM final_staging_products;
+SELECT COUNT(*) FROM final_staging_order_payments;
+
+-- Проверка, что размерности заполнены
 SELECT COUNT(*) FROM final_dim_date;
 SELECT COUNT(*) FROM final_dim_customer;
 SELECT COUNT(*) FROM final_dim_product;
 
+-- Проверка факта
 SELECT COUNT(*) FROM final_fact_orders;
+```
 
+Пример простой витрины выручки по годам и месяцам:
+
+```sql
 SELECT
     d.year,
     d.month,
@@ -200,8 +388,6 @@ JOIN final_dim_date d
   ON d.date_key = f.order_purchase_date_key
 GROUP BY d.year, d.month
 ORDER BY d.year, d.month;
+```
 
-После успешного прогона DAG’а:
-
-- В Airflow UI можно показать граф зависимостей и статус задач.  
-- В Postgres - скриншоты таблиц `final_dim_*` и `final_fact_orders` с данными.
+Для отчётности по проекту подготовлены скриншоты и возникшие трудности в ходе работы с их решениями.

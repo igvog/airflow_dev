@@ -48,9 +48,9 @@ with DAG(
         default_args=default_args,
         description='ETL пайплайн: Датасет → Postgres → Star Schema DW',
         schedule_interval='@daily',
-        start_date=datetime(2016, 10, 4),
+        start_date=datetime(2017, 1, 1),
         catchup=True,
-        max_active_runs=2,
+        max_active_runs=1,
         max_active_tasks=4,
         tags=['etl', 'dataset', 'csv', 'datawarehouse', 'star-schema']
 ) as dag:
@@ -494,14 +494,9 @@ with DAG(
         task_id='create_dw_schema',
         postgres_conn_id='postgres_etl_target_conn',
         sql="""
-        -- Дропаем существующие DW tables
-        DROP TABLE IF EXISTS final_fact_orders CASCADE;
-        DROP TABLE IF EXISTS final_dim_product CASCADE;
-        DROP TABLE IF EXISTS final_dim_customer CASCADE;
-        DROP TABLE IF EXISTS final_dim_date CASCADE;
 
         -- Измерение: Даты, для анализа по времени (time-based analysis)
-        CREATE TABLE final_dim_date (
+        CREATE TABLE IF NOT EXISTS final_dim_date (
             date_key        INTEGER PRIMARY KEY,   -- формат YYYYMMDD
             full_date       DATE        NOT NULL,
             year            INTEGER     NOT NULL,
@@ -515,7 +510,7 @@ with DAG(
         );
 
         -- Измерение: Клиенты
-        CREATE TABLE final_dim_customer (
+        CREATE TABLE IF NOT EXISTS final_dim_customer (
             customer_key             SERIAL PRIMARY KEY,
             customer_id              TEXT        NOT NULL UNIQUE,  -- из customers.customer_id
             customer_unique_id       TEXT,
@@ -527,7 +522,7 @@ with DAG(
         );
 
         -- Измерение: Товары
-        CREATE TABLE final_dim_product (
+        CREATE TABLE IF NOT EXISTS final_dim_product (
             product_key                 SERIAL PRIMARY KEY,
             product_id                  TEXT        NOT NULL UNIQUE, -- products.product_id
             product_category_name       TEXT,
@@ -543,7 +538,7 @@ with DAG(
         );
 
         -- Таблица фактов: Заказы
-        CREATE TABLE final_fact_orders (
+        CREATE TABLE IF NOT EXISTS final_fact_orders (
             order_item_key                 SERIAL PRIMARY KEY,   -- суррогатный ключ
 
             -- Натуральный ключ строки заказа
@@ -584,16 +579,16 @@ with DAG(
         );
 
         -- Create indexes for better query performance
-        CREATE INDEX idx_final_fact_orders_customer_key
+        CREATE INDEX IF NOT EXISTS idx_final_fact_orders_customer_key
             ON final_fact_orders (customer_key);
             
-        CREATE INDEX idx_final_fact_orders_product_key
+        CREATE INDEX IF NOT EXISTS idx_final_fact_orders_product_key
             ON final_fact_orders (product_key);
 
-        CREATE INDEX idx_final_fact_orders_order_purchase_date_key
+        CREATE INDEX IF NOT EXISTS idx_final_fact_orders_order_purchase_date_key
             ON final_fact_orders (order_purchase_date_key);
 
-        CREATE INDEX idx_final_fact_orders_order_id
+        CREATE INDEX IF NOT EXISTS idx_final_fact_orders_order_id
             ON final_fact_orders (order_id);
         """,
     )
@@ -640,12 +635,10 @@ with DAG(
             logger.exception(f"Ошибка при заполнении final_dim_date: {e}")
             raise
 
-
     populate_dim_date_task = PythonOperator(
         task_id="populate_dim_date",
         python_callable=populate_dim_date,
     )
-
 
     def populate_dim_customer(**context):
         """Заполняет final_dim_customer из final_staging_customers."""
