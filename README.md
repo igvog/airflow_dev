@@ -1,129 +1,353 @@
-# Airflow ETL Demo Setup
+# 📦 Final Project: Airflow + Olist E-commerce Data Warehouse (DWH)
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+Итоговый проект по курсу Data Engineering.  
+Реализован полный ETL-процесс: загрузка e-commerce датасета Olist в PostgreSQL, формирование staging-слоя и построение аналитического хранилища данных (DWH) по звёздной схеме.
 
-## Project Structure
+Проект подготовлен для запуска в Docker + Airflow, полностью воспроизводим и соответствует всем требованиям финального задания.
 
-Ensure your files are arranged as follows:
+---
 
-```
-.
-├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
-```
+# 🔍 1. Постановка задачи
 
-## Step 1: Update .env File
+Необходимо:
 
-Before you start, find your local user ID by running this in your terminal:
+- Использовать настоящий e-commerce датасет (Kaggle — Olist).
+- Загрузить сырые CSV-файлы в PostgreSQL (staging-уровень).
+- Построить Data Warehouse по модели *звезда* (dim/fact).
+- Реализовать ETL в Airflow:
+  - логирование,
+  - обработку ошибок (`try/except`),
+  - кастомный Telegram alerting,
+  - backfill и re-fill,
+  - параметризацию (передача бизнес-даты),
+  - поддержку `execution_date` как бизнес-даты.
 
-```bash
-id -u
-```
+---
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+# 📁 2. Используемый датасет
 
-## Step 2: Start the Environment
+Источник:  
+**Brazilian E-Commerce Public Dataset by Olist (Kaggle)**  
 
-With Docker Desktop running, open a terminal in the project directory and run:
+Используются CSV-файлы:
 
-```bash
-docker-compose up -d
-```
+- `olist_orders_dataset.csv`
+- `olist_order_items_dataset.csv`
+- `olist_order_payments_dataset.csv`
+- `olist_order_reviews_dataset.csv`
+- `olist_customers_dataset.csv`
+- `olist_geolocation_dataset.csv`
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
+Все файлы должны находиться локально по пути:
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+./data/olist/
 
-## Step 3: Access Airflow
+Копировать код
 
-Open your web browser and go to:
+В контейнере мапятся в:
 
-**http://localhost:8080**
+/opt/airflow/data/olist/
 
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
+yaml
+Копировать код
 
-## Step 4: Create the Postgres Connection
+---
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
+# 🧱 3. Архитектура решения
 
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
+Проект строится в два слоя:
 
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
+RAW CSV → STAGING (Postgres) → DWH (STAR SCHEMA)
 
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
+markdown
+Копировать код
 
-## Step 5: Run Your ETL DAG
+## 3.1. Staging слой
 
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
+Содержит таблицы:
 
-## Step 6: Verify the Data
+- `stg_orders`
+- `stg_order_items`
+- `stg_order_payments`
+- `stg_order_reviews`
+- `stg_customers`
+- `stg_geolocation`
 
-How do you know it worked? Let's connect to the target database and check.
+Особенности:
 
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
+- структура почти 1-в-1 как CSV;
+- безопасная загрузка через `PostgresHook.insert_rows`;
+- обработка пустых значений;
+- батчевые вставки (5000 строк);
+- try/except + логирование ошибок;
+- кастомный Telegram alert при падении задачи.
 
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
+## 3.2. DWH слой (звезда)
 
-Once connected, run this SQL query:
+### Измерения (DIM):
+
+1. `dim_customer`
+2. `dim_geolocation`
+3. `dim_payment_type`
+4. `dim_date`  
+   заполняется через `generate_series` (календарь на 20 лет)
+
+### Факты (FACT):
+
+- `fact_order_items`
+- `fact_order_payments`
+- `fact_order_reviews`
+
+Особенности:
+
+- Surrogate keys (`SERIAL`)
+- Business keys уникальны
+- Foreign keys на DIM таблицы
+- Индексация для аналитики
+- Идемпотентность: удаление + вставка (re-fill per date)
+
+---
+
+# 🏗 4. DAG #1 — RAW → STAGING  
+**Файл:** `dags/ecommerce_raw_to_staging.py`
+
+Основные задачи:
+
+### ✔ create_staging_tables
+Создаёт 6 таблиц `stg_*` при первом запуске.
+
+### ✔ load_csv_to_staging (универсальный загрузчик)
+- читает файл через Pandas,
+- заменяет NaN на None,
+- вставляет строки пачками в Postgres,
+- логирует объём загруженных данных,
+- ловит ошибки и отправляет Telegram alert.
+
+### ✔ отдельные задачи загрузки:
+- load_orders  
+- load_order_items  
+- load_order_payments  
+- load_order_reviews  
+- load_customers  
+- load_geolocation  
+
+Каждый task загружает свой CSV в свою staging таблицу.
+
+### ✔ зависимости:
+create_staging_tables → все load_* задачи
+
+yaml
+Копировать код
+
+---
+
+# 🌟 5. DAG #2 — STAGING → DWH (STAR SCHEMA)  
+**Файл:** `dags/ecommerce_dwh_star_schema.py`
+
+Основные компоненты:
+
+### ✔ try/except decorator (`safe_execute`)
+Оборачивает все Python-таски  
+→ детальное логирование ошибок  
+→ исключения не подавляются.
+
+### ✔ create_dw_schema
+Создаёт dim и fact таблицы.
+
+### ✔ populate_dim_customer
+- upsert по `customer_id`
+- никакого дублирования
+
+### ✔ populate_dim_geolocation
+- DISTINCT по ZIP-кодам  
+- ON CONFLICT DO NOTHING
+
+### ✔ populate_dim_payment_type
+- создаёт справочник типов оплаты
+
+### ✔ populate_dim_date
+- generate_series(2010–2030)
+- форматирование surrogate key `YYYYMMDD`
+
+### ✔ populate_fact_order_items / payments / reviews
+Каждая таблица фактов:
+
+1) сначала очищает записи за бизнес-день:
 
 ```sql
-SELECT * FROM users;
-```
+DELETE FROM fact_order_items WHERE date_key = ...
+затем вставляет актуальные данные за этот день.
 
-You should see the 10 user records from the API! 🎉
+✔ Параметризация:
+csharp
+Копировать код
+params: { "run_for_date": nullable string }
+Если не передано вручную, используется execution_date.
 
-## Stopping the Environment
+Это позволяет:
 
-To stop all the containers, run:
+backfill
 
-```bash
-docker-compose down
-```
+re-fill
 
-To stop and remove the database volumes (deleting all your data), run:
+выборочное перестроение конкретного дня
 
-```bash
-docker-compose down -v
-```
+⏳ 6. Backfill и Re-fill
+В DAG #2 включено:
 
+ini
+Копировать код
+catchup=True
+start_date=2016-01-01
+Backfill:
+Airflow выполнит DAG за все исторические даты.
 
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
+Re-fill:
+Если запустить DAG вручную:
 
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
+ini
+Копировать код
+run_for_date = "2017-10-04"
+FACT таблицы пересоберутся только за этот день.
+
+📣 7. Telegram alerting
+Подключение в Airflow:
+Connection:
+
+Conn Id: telegram_conn
+
+Conn Type: HTTP
+
+Host: https://api.telegram.org
+
+Login: <CHAT_ID>
+
+Password: <BOT_TOKEN>
+
+Встроенный alert:
+Используется callback:
+
+python
+Копировать код
+"on_failure_callback": telegram_alert
+Сообщение содержит:
+
+имя DAG
+
+имя task
+
+ошибку
+
+статус FAIL
+
+⚙️ 8. Docker окружение
+Проект запускается через docker-compose:
+
+Копировать код
+docker-compose up -d
+Сервисы:
+
+Сервис	Назначение
+postgres-airflow-db	БД метаданных Airflow
+postgres-etl-target	БД с staging + dwh
+airflow-services	webserver + scheduler
+
+Airflow UI:
+
+arduino
+Копировать код
+http://localhost:8080
+📦 9. Package manager (UV)
+Поддержан пункт 4 задания:
+"Technical add.work: package manager to UV or poetry"
+
+Файл:
+
+Копировать код
+pyproject.toml
+Используется для декларации зависимостей:
+
+toml
+Копировать код
+[project]
+name = "airflow-project"
+requires-python = ">=3.10"
+dependencies = [
+    "apache-airflow",
+    "apache-airflow-providers-postgres",
+    "apache-airflow-providers-http"
+]
+Установка:
+
+bash
+Копировать код
+uv sync
+Docker использует requirements.txt, UV — альтернативный менеджер.
+
+🧪 10. Проверка результатов
+После запуска DAG:
+
+Проверка staging:
+sql
+Копировать код
+SELECT COUNT(*) FROM stg_orders;
+SELECT COUNT(*) FROM stg_order_items;
+SELECT COUNT(*) FROM stg_order_payments;
+SELECT COUNT(*) FROM stg_customers;
+SELECT COUNT(*) FROM stg_geolocation;
+Проверка dim:
+sql
+Копировать код
+SELECT COUNT(*) FROM dim_customer;
+SELECT COUNT(*) FROM dim_geolocation;
+SELECT COUNT(*) FROM dim_payment_type;
+SELECT COUNT(*) FROM dim_date;
+Проверка fact:
+sql
+Копировать код
+SELECT COUNT(*) FROM fact_order_items;
+SELECT COUNT(*) FROM fact_order_payments;
+SELECT COUNT(*) FROM fact_order_reviews;
+Пример аналитического запроса:
+sql
+Копировать код
+SELECT 
+    d.year,
+    d.month,
+    SUM(price + freight_value) AS revenue
+FROM fact_order_items f
+JOIN dim_date d ON d.date_key = f.date_key
+GROUP BY d.year, d.month
+ORDER BY d.year, d.month;
+🎯 11. Итоги проекта
+Реализовано:
+
+Полный ETL pipeline из RAW → STAGING → DWH.
+
+Два DAG:
+
+загрузка CSV,
+
+построение звезды.
+
+Идемпотентность:
+
+upsert в DIM,
+
+delete+insert в FACT.
+
+Telegram оповещения.
+
+Логирование и try/except.
+
+Backfill и выборочная пересборка по датам.
+
+Поддержка UV.
+
+Полностью dockerized окружение.
+
+Проект готов к использованию преподавателем без дополнительной настройки.
+
+📌 Автор:
+Arman A.
+2025
