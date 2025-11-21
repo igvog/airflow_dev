@@ -40,6 +40,14 @@ id -u
 
 Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
 
+```
+# .env
+TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
+```
+
+Also get your telegram `bot token` and `chat_id` and put them in to .env file. The token you can get from `BotFather`, after creating your own bot. To get your `chat_id` you can use `@userinfobot`.
+
 ## Step 2: Start the Environment
 
 With Docker Desktop running, open a terminal in the project directory and run:
