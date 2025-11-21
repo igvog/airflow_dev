@@ -1,129 +1,111 @@
-# Airflow ETL Demo Setup
+# Airflow ETL инструкция по запуску
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+Гайдлайн поможет ориентироваться в ветке `alikhan_task` для дальнейшего запуска ETL.
 
-## Project Structure
-
-Ensure your files are arranged as follows:
-
-```
+## Структура проекта
 .
 ├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
+│   └── alikhan_bekkaliyev_task.py (Непосредственно сам код)
+├── logs/           (Airflow сам создаст все логи по ходу выполнения)
+├── plugins/        (Пустует, может быть применен в дальнейшем использовании)
 ├── docker-compose.yml
-├── .env
+├── .env (в gitignore)
+├── .env.example (необходимый токен Kaggle)
 ├── requirements.txt
-└── README.md
+└── README.md (текущий файл)
 ```
 
-## Step 1: Update .env File
+## Требования
 
-Before you start, find your local user ID by running this in your terminal:
+№1 Аккаунт Kaggle для получения токена
+№2 Docker
+№3 Docker Compose
+
+## Step 1: Получите id
+
+Через терминал заполучите id с помощью этой команды:
 
 ```bash
 id -u
 ```
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+## Step 2: Создайте файл .env
 
-## Step 2: Start the Environment
+Создайте `.env` файл и по примеру в `.env.example` замените значение `AIRFLOW_UID` на число полученное в терминале. Это предотвращает ошибки прав доступа к файлам внутри контейнера Docker.
+Войдите в Kaggle. Нажмите на свой профиль в правом верхнем углу -> Settings -> API -> Create New Token. После загрузки, замените значения `KAGGLE_USERNAME` и `KAGGLE_KEY` на содержимое загрузившегося файла (без кавычек)
 
-With Docker Desktop running, open a terminal in the project directory and run:
+## Step 3: Запустите контейнер
+
+Откройте Docker Desktop и напишите указанную ниже команду в терминале:
 
 ```bash
 docker-compose up -d
 ```
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
+В итоге вы установите все необходимые библиотеки для Python и запустите окружение где находится PostgreSQL и Airflow.
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+## Step 4: Откройте Airflow UI
 
-## Step 3: Access Airflow
-
-Open your web browser and go to:
+Откройте браузер и перейдите по URL:
 
 **http://localhost:8080**
 
-Log in with the default credentials (set in the `docker-compose.yml`):
+Войдите в Airflow с помощью данных указанных ниже (можно их редактировать в  `docker-compose.yml`):
 - **Username:** `admin`
 - **Password:** `admin`
 
-## Step 4: Create the Postgres Connection
+## Step 5: Установите соединение с Postgres
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
+Необходимо создать соединение с БД `postgres-etl-target` для работы между БД и кодом.
 
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
+1. В Airflow UI, перейдите по **Admin → Connections**
+2. Нажмите **+** что бы добавить новое соединение
+3. Заполните поля нижеуказанными значениями:
 
-   | Field | Value | Notes |
+   | Поле | Значение | Заметки |
    |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
+   | **Connection Id** | `postgres_etl_target_conn` | Необходимо что бы оно совпадало с  `ETL_POSTGRES_CONN_ID` внутри DAG'а |
    | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
+   | **Host** | `postgres-etl-target` | Название в `docker-compose.yml` |
+   | **Schema** | `etl_db` | Значение из окружения `postgres-etl-target` |
+   | **Login** | `etl_user` | Значение из окружения `postgres-etl-target` |
+   | **Password** | `etl_pass` | Значение из окружения `postgres-etl-target` |
+   | **Port** | `5432` | Базовый порт для Postgres, если у вас занято можете поменять на 5433 |
 
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
+4. (Необязательно) Нажмите **Test**. Должна появиться надпись "Connection successfully tested."
+5. Нажмите **Save**.
 
-## Step 5: Run Your ETL DAG
+## Step 6: Запустите DAG
 
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
+1. Перейдите во вкладку DAGs
+2. Найдите `api_to_postgres_etl` DAG
+3. Нажмите кнопку (▶) с правой стороны для запуска вручную
+4. В интерфейсе Airflow вы можете просмотреть каждый таск отдельно, посмотреть на зависимости в Graph и логи.
 
-## Step 6: Verify the Data
+## Step 7: Проверка на выполнение
 
-How do you know it worked? Let's connect to the target database and check.
-
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
+Что бы узнать сработал ли наш DAG как надо мы можем использовать любой клиент SQL и подключится к нашей базе данных `postgres-etl-target`.
 
 - **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
+- **Port:** `5433` (Хост определенный в `docker-compose.yml`)
 - **Database:** `etl_db`
 - **User:** `etl_user`
 - **Password:** `etl_pass`
 
-Once connected, run this SQL query:
+После подключения выполняем небольшой запрос:
 
 ```sql
-SELECT * FROM users;
+SELECT * FROM fact_sales
+ORDER BY DATE_ID
+LIMIT 20;
 ```
 
-You should see the 10 user records from the API! 🎉
+Вы должны увидеть таблицу! 🎉
 
-## Stopping the Environment
+## Остановите окружение
 
-To stop all the containers, run:
-
-```bash
-docker-compose down
-```
-
-To stop and remove the database volumes (deleting all your data), run:
+Для остановки окружения введите в терминале, вы остановите терминал удалив volumes:
 
 ```bash
 docker-compose down -v
 ```
-
-
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
-
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
