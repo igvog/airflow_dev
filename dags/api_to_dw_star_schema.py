@@ -21,7 +21,7 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 1,
+    'retries': 0,
     'retry_delay': timedelta(minutes=1),
 }
 
@@ -132,6 +132,7 @@ with DAG(
     )
     
     def load_staging_details(**context):
+        from psycopg2.extras import execute_values
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
         df = pd.read_csv('/opt/airflow/data/raw/datasets/details.csv')
 
@@ -143,112 +144,108 @@ with DAG(
         df['genres'] = df['genres'].apply(lambda x: ';'.join(eval(x)) if pd.notnull(x) else None)
         df['studios'] = df['studios'].apply(lambda x: ';'.join(eval(x)) if pd.notnull(x) else None)
 
-        df = df.where(pd.notnull(df), None)
+        df = df.replace({pd.NaT: None, np.nan: None})
 
-        for _, row in df.iterrows():
-            sql = """
-            INSERT INTO staging_details (
-                mal_id, title, title_japanese, type, status, score, scored_by,
-                start_date, end_date, genres, studios
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (mal_id) DO NOTHING;
-            """
-            hook.run(sql, parameters=(
-                row['mal_id'], row['title'], row['title_japanese'], row['type'], row['status'],
-                row['score'], row['scored_by'], row['start_date'], row['end_date'],
-                row['genres'], row['studios']
-            ))
+        df['start_date'] = df['start_date'].apply(
+            lambda x: None if pd.isna(x) else x.strftime('%Y-%m-%d') if hasattr(x, 'strftime') else None
+        )
+        df['end_date'] = df['end_date'].apply(
+            lambda x: None if pd.isna(x) else x.strftime('%Y-%m-%d') if hasattr(x, 'strftime') else None
+        )
+        required_columns = [
+            'mal_id', 'title', 'title_japanese', 'type', 'status',
+            'score', 'scored_by', 'start_date', 'end_date', 'genres', 'studios'
+        ]
+        # Проверяем, что все колонки есть
+        missing = [col for col in required_columns if col not in df.columns]
+        if missing:
+            logging.error(f"Missing columns: {missing}")
+            raise ValueError(f"Missing columns: {missing}")
     
+        # Выбираем только нужные колонки
+        df_insert = df[required_columns]
+    
+        logging.info(f"Columns to insert: {df_insert.columns.tolist()}")
+        logging.info(f"First row: {df_insert.iloc[0].to_dict()}")
+        # Batch insert через execute_values (намного быстрее)
+        conn = hook.get_conn()
+        cursor = conn.cursor()
+    
+        sql = """
+        INSERT INTO staging_details (
+            mal_id, title, title_japanese, type, status, score, scored_by,
+            start_date, end_date, genres, studios
+        ) VALUES %s
+        ON CONFLICT (mal_id) DO NOTHING
+        """
+
+        # Подготовка данных — используем только выбранные колонки `df_insert`
+        values = [tuple(row) for row in df_insert.values]
+    
+        execute_values(cursor, sql, values, page_size=1000)
+        conn.commit()
+        cursor.close()
+
         logging.info(f"{len(df)} rows inserted into staging_details")
-        """Load posts data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        posts_data = context['ti'].xcom_pull(key='posts_data', task_ids='fetch_api_data')
-
-        for post in posts_data:
-            insert_query = """
-            INSERT INTO staging_posts (id, user_id, title, body, raw_data)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                title = EXCLUDED.title,
-                body = EXCLUDED.body,
-                raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
-            """
-            hook.run(
-                insert_query,
-                parameters=(
-                    post['id'],
-                    post['userId'],
-                    post['title'],
-                    post['body'],
-                    json.dumps(post)
-                )
-            )
-
-        logging.info(f"Loaded {len(posts_data)} posts into staging_posts")
     
+            
     load_staging_details = PythonOperator(
         task_id='load_staging_details',
         python_callable=load_staging_details,
     )
     
     def load_staging_ratings(**context):
+        from psycopg2.extras import execute_values
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        df = pd.read_csv('/opt/airflow/data/raw/datasets/ratings.csv')
-
-        # Преобразуем score в float
-        df['score'] = pd.to_numeric(df['score'], errors='coerce')
-        df['num_watched_episodes'] = pd.to_numeric(df['num_watched_episodes'], errors='coerce')
-
-        df = df.where(pd.notnull(df), None)
-
-        for _, row in df.iterrows():
-            sql = """
-            INSERT INTO staging_ratings (
-                username, anime_id, score, status, num_watched_episodes
-            ) VALUES (%s, %s, %s, %s, %s)
-            """
-            hook.run(sql, parameters=(
-            row['username'], row['anime_id'], row['score'], row['status'], row['num_watched_episodes']
-        ))
-
-        logging.info(f"{len(df)} rows inserted into staging_ratings")
-        """Load users data into staging table"""
-        hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn')
-        users_data = context['ti'].xcom_pull(key='users_data', task_ids='fetch_api_data')
-        
-        for user in users_data:
-            insert_query = """
-            INSERT INTO staging_users (id, name, username, email, phone, website, address, company, raw_data)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                username = EXCLUDED.username,
-                email = EXCLUDED.email,
-                phone = EXCLUDED.phone,
-                website = EXCLUDED.website,
-                address = EXCLUDED.address,
-                company = EXCLUDED.company,
-                raw_data = EXCLUDED.raw_data,
-                loaded_at = CURRENT_TIMESTAMP;
-            """
-            hook.run(
-                insert_query,
-                parameters=(
-                    user['id'],
-                    user['name'],
-                    user['username'],
-                    user['email'],
-                    user.get('phone', ''),
-                    user.get('website', ''),
-                    json.dumps(user.get('address', {})),
-                    json.dumps(user.get('company', {})),
-                    json.dumps(user)
-                )
-            )
-        
-        logging.info(f"Loaded {len(users_data)} users into staging_users")
+        # Читаем только первые 20000 строк (БЕЗ chunksize и цикла)
+        df = pd.read_csv('/opt/airflow/data/raw/datasets/ratings.csv', nrows=20000)
+    
+        # ОТЛАДКА: посмотрим все колонки
+        logging.info(f"CSV columns: {df.columns.tolist()}")
+        logging.info(f"Total columns: {len(df.columns)}")
+    
+        # Преобразуем числовые колонки
+        if 'score' in df.columns:
+            df['score'] = pd.to_numeric(df['score'], errors='coerce')
+        if 'num_watched_episodes' in df.columns:
+            df['num_watched_episodes'] = pd.to_numeric(df['num_watched_episodes'], errors='coerce')
+    
+        # Заменяем NaN на None
+        df = df.replace({np.nan: None})
+    
+        # ВАЖНО: Выбираем только нужные 5 колонок
+        required_columns = ['username', 'anime_id', 'score', 'status', 'num_watched_episodes']
+    
+        # Проверяем наличие колонок
+        missing = [col for col in required_columns if col not in df.columns]
+        if missing:
+            logging.error(f"Missing columns: {missing}")
+            logging.error(f"Available columns: {df.columns.tolist()}")
+            raise ValueError(f"Missing columns: {missing}")
+    
+        # Выбираем только нужные колонки
+        df_insert = df[required_columns]
+    
+        logging.info(f"Columns to insert: {df_insert.columns.tolist()}")
+        logging.info(f"First row: {df_insert.iloc[0].to_dict()}")
+    
+        # Batch insert
+        conn = hook.get_conn()
+        cursor = conn.cursor()
+    
+        sql = """
+        INSERT INTO staging_ratings (username, anime_id, score, status, num_watched_episodes)
+        VALUES %s
+        """
+    
+        # Подготовка данных из df_insert (не df!)
+        values = [tuple(row) for row in df_insert.values]
+    
+        execute_values(cursor, sql, values, page_size=1000)
+        conn.commit()
+        cursor.close()
+    
+        logging.info(f"{len(df_insert)} rows inserted into staging_ratings")
     
     load_staging_ratings = PythonOperator(
         task_id='load_staging_ratings',
