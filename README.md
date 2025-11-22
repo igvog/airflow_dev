@@ -186,7 +186,7 @@ docker-compose down -v
 
 ### 5. Результат работы
 
-* В Airflow UI виден DAG с зелёными задачами при успешном прогоне.
+* В Airflow UI виден DAG с зелёными задачами.
 * В базе данных созданы таблицы `dim_currency`, `dim_api_source`, `fact_exchange_rate`, `fact_daily_stats`, `fact_alerts_log`,`fact_crypto_rate`
 * Данные загружены и агрегированы, аномалии выявляются и отправляются в виде уведомлений.
 ---
