@@ -1,129 +1,60 @@
-# Airflow ETL Demo Setup
+# Movies ETL Data Warehouse
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+Этот проект реализует ETL-процесс загрузки данных о фильмах из публичного источника (The Movies Dataset) в хранилище данных (Postgres) с последующим формированием витрины данных по звёздной схеме.
 
-## Project Structure
+Автор: **Yernas**
 
-Ensure your files are arranged as follows:
+---
 
-```
-.
-├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
-```
+## Архитектура проекта
 
-## Step 1: Update .env File
+- **Airflow** — управление и оркестрация ETL пайплайна  
+- **Postgres** — целевая база данных (Data Warehouse)  
+- **Pandas** — для обработки и очистки данных  
 
-Before you start, find your local user ID by running this in your terminal:
+ETL-процесс реализован в DAG под названием:
 
-```bash
-id -u
-```
+> `movies_api_to_dw`
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+Данные преобразуются в **звёздную модель**:
 
-## Step 2: Start the Environment
+### Модель DWH (Star Schema)
 
-With Docker Desktop running, open a terminal in the project directory and run:
+- **Факт таблица**
+  - `fact_rating`
 
-```bash
-docker-compose up -d
-```
+- **Измерения**
+  - `dim_movies`
+  - `dim_user`
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
+---
 
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
+## Этапы ETL
 
-## Step 3: Access Airflow
+1️ **Extract** — загрузка данных из The Movies Dataset  
+2️ **Transform** — очистка, нормализация, формирование измерений и фактов  
+3️ **Load** — запись в Postgres (схема `dw`)
 
-Open your web browser and go to:
+---
 
-**http://localhost:8080**
+## Структура проекта
 
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
+AIRFLOW_DEV/
+├─ dags/
+│   ├─ api_to_dw_star_schema.py
+│   ├─ movies_api_to_dw.py
+│
+│
+├─ logs
+├─ docker-compose.yaml
+├─ requirements.txt
+└─ README.md
 
-## Step 4: Create the Postgres Connection
+## Запуск проекта
+1. Клонировать репозиторий
+2. Запустить сервисы через Docker Compose:
+   docker-compose up -d
+3. Открыть Airflow UI:
+   http://localhost:8081
+4. Запустить DAG: `movies_dataset_to_dw`
 
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
-
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
-
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
-
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
-
-## Step 5: Run Your ETL DAG
-
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
-
-## Step 6: Verify the Data
-
-How do you know it worked? Let's connect to the target database and check.
-
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
-
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
-
-Once connected, run this SQL query:
-
-```sql
-SELECT * FROM users;
-```
-
-You should see the 10 user records from the API! 🎉
-
-## Stopping the Environment
-
-To stop all the containers, run:
-
-```bash
-docker-compose down
-```
-
-To stop and remove the database volumes (deleting all your data), run:
-
-```bash
-docker-compose down -v
-```
-
-
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
-
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
