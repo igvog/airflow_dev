@@ -1,129 +1,105 @@
-# Airflow ETL Demo Setup
+# Car Sales Star Schema DWH | Airflow ETL Project
 
-This guide walks you through setting up and running the Airflow environment defined in the `docker-compose.yml` file.
+Полноценный ETL-пайплайн на Apache Airflow, который загружает исторические данные о продажах автомобилей (2018–2024) из CSV-файла в PostgreSQL в формате **звёздной схемы (Star Schema)**.
 
-## Project Structure
+**Особенности проекта:**
+- Полная звёздная схема (5 измерений + таблица фактов)
+- Full refresh (TRUNCATE + COPY) — быстро и надёжно
+- Telegram-уведомления о успехе и ошибках каждой задачи
+- Безопасное хранение секретов через Airflow Variables
+- Логирование, try/except, graceful cleanup
+- Поддержка backfill (catchup=True)
+- Параметризация (можно запускать на конкретную дату)
+- Готов к продакшену
 
-Ensure your files are arranged as follows:
+## Архитектура данных
+staging_car_sales → dim_date, dim_customer, dim_car, dim_salesperson, dim_region → fact_car_sales
+text### Таблицы измерений (Dimensions)
+- `dim_date` — календарь (date_key, год, квартал, месяц, сезон и т.д.)
+- `dim_customer` — клиенты + возрастная группа
+- `dim_car` — автомобили (марка, модель, год)
+- `dim_salesperson` — продавцы
+- `dim_region` — регионы продаж
 
-```
+### Таблица фактов
+- `fact_car_sales` — продажи (кол-во, цена, прибыль, комиссия и т.д.)
+
+## Структура проекта
 .
 ├── dags/
-│   └── api_to_postgres_etl.py
-├── logs/           (Airflow will create this)
-├── plugins/        (Empty, for future use)
-├── docker-compose.yml
-├── .env
-├── requirements.txt
-└── README.md
-```
+│   └── car_sales_star_schema_dwh.py          ← основной DAG
+├── data/
+│   └── car_sales_2018_2024_enhanced.csv      ← датасет (положи сюда!)
+├── logs/                                     ← создаётся автоматически
+├── docker-compose.yaml                       ← Airflow + 2 Postgres БД
+├── .env                                      ← UID для избежания проблем с правами
+├── requirements.txt                          ← pandas, requests и т.д.
+└── README.md                                 ← ты читаешь его
+text## Как запустить (Windows / Linux / Mac — всё одинаково)
 
-## Step 1: Update .env File
-
-Before you start, find your local user ID by running this in your terminal:
+### 1. Подготовка
 
 ```bash
+# Клонируй / распакуй проект
+cd airflow_car_sales_dwh
+
+# Узнай свой UID (Linux/Mac) или оставь 1000 (Windows WSL)
 id -u
-```
+# → запомни число (обычно 1000)
 
-Open the `.env` file and replace `1000` with the number your terminal printed. This prevents file permission errors inside the Docker container.
+# Открой .env и замени 1000 на своё число
+nano .env
+# AIRFLOW_UID=1000  → AIRFLOW_UID=твоё_число
+2. Запуск окружения
+Bashdocker-compose up -d
+Первый запуск займёт 5–10 минут (скачивает образы, ставит зависимости).
+Проверь:
+Bashdocker-compose ps
+# Должны быть Up: postgres, postgres-etl-target, webserver, scheduler
+3. Доступ к Airflow UI
+Открой в браузере: http://localhost:8080
+Логин / пароль: admin / admin
+4. Настройка подключения к целевой БД
+Admin → Connections → +
+Заполни точно так:
+ПолеЗначениеConnection Idpostgres_etl_target_connConnection TypePostgresHostpostgres-etl-targetSchemaetl_dbLoginetl_userPasswordetl_passPort5432
+→ Test → Save
+5. Добавь Telegram-уведомления (по желанию, но красиво)
+Admin → Variables → + (два раза)
+Важно: сначала напиши своему боту в Telegram /start, иначе он не сможет тебе писать!
+6. Положи датасет
+Скачай/положи файл car_sales_2018_2024_enhanced.csv в папку ./data/
+7. Запуск полного ETL (один раз)
+В UI:
 
-## Step 2: Start the Environment
+Найди DAG → car_sales_star_schema_dwh
+Нажми Trigger DAG
+Поставь галку Catchup
+Укажи даты: Start 2022-01-01, End — сегодня
+→ Trigger
 
-With Docker Desktop running, open a terminal in the project directory and run:
+Или через терминал (быстрее):
+Bashdocker-compose exec webserver airflow dags trigger car_sales_star_schema_dwh
+Готово! Через 3–10 минут (зависит от размера CSV) всё загрузится.
+8. Проверка результата
+Подключись к целевой базе через любой клиент:
 
-```bash
-docker-compose up -d
-```
+Host: localhost
+Port: 5433
+Database: etl_db
+User: etl_user
+Password: etl_pass
 
-This will:
-- Pull the Postgres and Airflow images
-- Start the two Postgres databases (one for Airflow, one for the ETL)
-- Build the Airflow image, installing the Python packages from `requirements.txt`
-- Start the Airflow webserver and scheduler
-
-> **Note:** The first launch can take a few minutes as it downloads images and builds.
-
-## Step 3: Access Airflow
-
-Open your web browser and go to:
-
-**http://localhost:8080**
-
-Log in with the default credentials (set in the `docker-compose.yml`):
-- **Username:** `admin`
-- **Password:** `admin`
-
-## Step 4: Create the Postgres Connection
-
-This is the most important step for the ETL to work. You need to tell Airflow how to connect to the `postgres-etl-target` database.
-
-1. In the Airflow UI, go to **Admin → Connections**
-2. Click the **+** button to add a new connection
-3. Fill in the form with these exact values:
-
-   | Field | Value | Notes |
-   |-------|-------|-------|
-   | **Connection Id** | `postgres_etl_target_conn` | This must match the `ETL_POSTGRES_CONN_ID` in the DAG file |
-   | **Connection Type** | `Postgres` | |
-   | **Host** | `postgres-etl-target` | This is the service name from `docker-compose.yml` |
-   | **Schema** | `etl_db` | From the `postgres-etl-target` environment variables |
-   | **Login** | `etl_user` | From the `postgres-etl-target` environment variables |
-   | **Password** | `etl_pass` | From the `postgres-etl-target` environment variables |
-   | **Port** | `5432` | This is the port inside the Docker network, not the 5433 host port |
-
-4. Click **Test**. It should show "Connection successfully tested."
-5. Click **Save**.
-
-## Step 5: Run Your ETL DAG
-
-1. Go back to the Airflow DAGs dashboard
-2. Find the `api_to_postgres_etl` DAG
-3. Click the **Play** button (▶) on the right to trigger a manual run
-4. You can click on the DAG name to watch the tasks run in the "Grid" or "Graph" view. If all goes well, all four tasks will turn green.
-
-## Step 6: Verify the Data
-
-How do you know it worked? Let's connect to the target database and check.
-
-You can use any SQL client (like DBeaver, TablePlus, or pgAdmin) to connect to the `postgres-etl-target` database using these details:
-
-- **Host:** `localhost`
-- **Port:** `5433` (This is the host port you defined in `docker-compose.yml`)
-- **Database:** `etl_db`
-- **User:** `etl_user`
-- **Password:** `etl_pass`
-
-Once connected, run this SQL query:
-
-```sql
-SELECT * FROM users;
-```
-
-You should see the 10 user records from the API! 🎉
-
-## Stopping the Environment
-
-To stop all the containers, run:
-
-```bash
-docker-compose down
-```
-
-To stop and remove the database volumes (deleting all your data), run:
-
-```bash
-docker-compose down -v
-```
-
-
-Task:
-1. Define dataset
-2. Write dag which creates dim/facts tables.
-3. **Additional work: logging framework, alerting, Try-catch, backfill and re-fill, paramerize dag (run for example 2024-01-01)**
-4. **Technical add.work: package manager to UV or poetry**
-
-Expected project output:
-1. Code
-2. Airflow DAG UI
-3. Dataset in DB
+Выполни:
+SQLSELECT COUNT(*) FROM fact_car_sales;
+SELECT * FROM dim_customer LIMIT 10;
+Должны быть десятки тысяч строк!
+9. Ежедневная загрузка (автоматически)
+После первого запуска DAG будет запускаться каждый день в 00:00 и перезаписывать DWH актуальными данными из CSV.
+Остановка
+Bashdocker-compose down        # остановить
+docker-compose down -v     # удалить все данные (осторожно!)
+Автор
+Aliaskar — Data Engineer
+Готов к новым вызовам
+Проект сделан с любовью к чистому коду и надёжным пайплайнам.
