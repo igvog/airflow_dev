@@ -42,7 +42,6 @@ default_args = {
 def _get_logical_date_str(context):
     dag_run = context.get("dag_run")
 
-    # Airflow 2.4+ — logical_date, но на всякий случай fallback на execution_date
     if dag_run:
         logical_date = getattr(dag_run, "logical_date", None) or getattr(dag_run, "execution_date", None)
     else:
@@ -115,6 +114,14 @@ def dag_failure_alert(context):
     logger.info("Отправляю Telegram-уведомление о падении DAG.")
     send_telegram_message(text)
 
+# BACKFILL
+def get_process_date(context):
+    dag_run = context.get("dag_run")
+
+    if dag_run and dag_run.conf.get("process_date"):
+        return dt.strptime(dag_run.conf["process_date"], "%Y-%m-%d")
+
+    return dt.now()
 
 def get_minio_client():
     logger.debug("Creating Minio client")
@@ -126,12 +133,17 @@ def get_minio_client():
     )
     return client
 
-def scrap_to_lake():
+def scrap_to_lake(**context):
     logger.info("=== Старт scrap_to_lake ===")
     i = 1
     rows = []
-    today_date = dt.now().strftime("%d.%m.%Y")
-    logger.info(f"Сегодняшняя дата: {today_date}")
+    # today_date = dt.now().strftime("%d.%m.%Y")
+    # logger.info(f"Сегодняшняя дата: {today_date}")
+
+    process_date_dt = get_process_date(context)
+    process_date = process_date_dt.strftime("%d.%m.%Y")
+
+    logger.info(f"Scraping данные за дату: {process_date}")
     
     while True:
         url = f'https://tanba.kezekte.kz/ru/frameless/animal/list?p={i}'
@@ -166,7 +178,7 @@ def scrap_to_lake():
             if registration_date:
                 registration_date_only = registration_date.split()[0]
 
-                if registration_date_only != today_date:
+                if registration_date_only != process_date: # today_date
                     logger.info(
                         f"Найдена дата, отличающаяся от сегодняшней: {registration_date_only}. Stop Scrapping."
                     )
@@ -198,7 +210,7 @@ def scrap_to_lake():
 
     file_data = csv_output.getvalue()
     file_bytes = file_data.encode('utf-8')
-    file_name = f'scraped_raw_data_{dt.now().strftime("%Y-%m-%d-%H-%M-%S")}.csv'
+    file_name = f'scraped_raw_data_{process_date}.csv' #dt.now().strftime("%Y-%m-%d-%H-%M-%S")
 
     try:
         client.put_object(
@@ -218,20 +230,23 @@ def transform_data_from_minio(task_instance):
     logger.info("=== Старт transform_data_from_minio ===")
     client = get_minio_client()
 
-    today_date = dt.now().strftime("%Y-%m-%d")
+    # today_date = dt.now().strftime("%Y-%m-%d")
+
+    process_date_dt = get_process_date(task_instance)
+    process_date = process_date_dt.strftime("%Y-%m-%d")
 
     bucket_name = 'raw'
-    logger.info(f"Ищу файл за {today_date} в bucket '{bucket_name}'")
+    logger.info(f"Ищу файл за {process_date} в bucket '{bucket_name}'")
 
     try:
         objects = client.list_objects(bucket_name)
         files = [obj.object_name for obj in objects]
         logger.debug(f"Найденные файлы в bucket '{bucket_name}': {files}")
         
-        file_name = next((f for f in files if today_date in f), None)
+        file_name = next((f for f in files if process_date in f), None)
 
         if not file_name:
-            logger.warning(f"Файл за сегодня ({today_date}) в bucket '{bucket_name}' не найден.")
+            logger.warning(f"Файл за сегодня ({process_date}) в bucket '{bucket_name}' не найден.")
             logger.info("=== Завершение transform_data_from_minio (нет файла) ===")
             return
 
@@ -315,7 +330,7 @@ def transform_data_from_minio(task_instance):
         writer = csv.writer(csv_output)
         writer.writerows(transformed_data)
 
-        cleaned_file_name = f'cleaned_data_{dt.now().strftime("%Y-%m-%d-%H-%M-%S")}.csv'
+        cleaned_file_name = f'cleaned_data_{process_date}.csv' # dt.now().strftime("%Y-%m-%d-%H-%M-%S")
 
         csv_bytes = csv_output.getvalue().encode('utf-8')
 
@@ -391,17 +406,20 @@ def load_data_from_minio_to_dw(task_instance):
     client = get_minio_client()
 
     bucket_name = 'clean'
-    today_date = dt.now().strftime("%Y-%m-%d")
-    logger.info(f"Ищу файл за {today_date} в bucket '{bucket_name}'")
+    # today_date = dt.now().strftime("%Y-%m-%d")
+    # logger.info(f"Ищу файл за {today_date} в bucket '{bucket_name}'")
+
+    process_date_dt = get_process_date(task_instance)
+    process_date = process_date_dt.strftime("%Y-%m-%d")
 
     objects = client.list_objects(bucket_name)
     files = [obj.object_name for obj in objects]
     logger.debug(f"Найденные файлы в bucket '{bucket_name}': {files}")
 
-    file_name = next((f for f in files if today_date in f), None)
+    file_name = next((f for f in files if process_date in f), None)
 
     if not file_name:
-        logger.warning(f"Файл за сегодня ({today_date}) в bucket '{bucket_name}' не найден.")
+        logger.warning(f"Файл за сегодня ({process_date}) в bucket '{bucket_name}' не найден.")
         logger.info("=== Завершение load_data_from_minio_to_dw (нет файла) ===")
         return
 
