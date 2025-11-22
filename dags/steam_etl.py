@@ -358,6 +358,7 @@ with DAG(
             fact_reviews_id SERIAL PRIMARY KEY,
             application_id BIGINT NOT NULL,
             reviewer_id BIGINT,
+            review_text TEXT,
             date_key INTEGER NOT NULL,
             voted_up BOOLEAN DEFAULT FALSE,
             votes_up INT DEFAULT 0,
@@ -502,10 +503,11 @@ with DAG(
     def populate_fact_reviews(**context):
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn') 
         query = """
-        INSERT INTO fact_reviews (application_id, reviewer_id, date_key, voted_up, votes_up, votes_funny, weighted_vote_score, playtime_forever, playtime_last_two_weeks)
+        INSERT INTO fact_reviews (application_id, reviewer_id, review_text, date_key, voted_up, votes_up, votes_funny, weighted_vote_score, playtime_forever, playtime_last_two_weeks)
         SELECT
             appid,
             author_steamid,
+            review_text,
             TO_CHAR(COALESCE(timestamp_created, CURRENT_DATE), 'YYYYMMDD')::INTEGER AS date_key,
             COALESCE(voted_up, FALSE),
             COALESCE(votes_up, 0),
@@ -521,7 +523,7 @@ with DAG(
     def populate_fact_game_prices(**context):
         hook = PostgresHook(postgres_conn_id='postgres_etl_target_conn') 
         query = """
-        INSERT INTO fact_game_prices (application_id, game_name,date_key, initial_price, final_price, discount_percent, is_free)
+        INSERT INTO fact_game_prices (application_id, game_name, date_key, initial_price, final_price, discount_percent, is_free)
         SELECT
             appid,
             name as game_name,
